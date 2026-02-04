@@ -1,0 +1,342 @@
+use crate::models::{Course, LoginResponse, UserCredentials};
+use reqwest::Client;
+use scraper::{Html, Selector};
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+
+/// 教务系统客户端
+pub struct EduSystemClient {
+    client: Client,
+    base_url: String,
+    cookie: Option<String>,
+}
+
+impl EduSystemClient {
+    /// 创建新的客户端
+    pub fn new(base_url: String) -> Self {
+        // 创建一个带有 Cookie 存储的客户端
+        let client = Client::builder()
+            .cookie_store(true)
+            .timeout(Duration::from_secs(30))
+            // 模拟浏览器 User-Agent
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .build()
+            .expect("Failed to create HTTP client");
+
+        EduSystemClient {
+            client,
+            base_url: base_url.trim_end_matches('/').to_string(), // 移除末尾斜杠
+            cookie: None,
+        }
+    }
+
+    /// 设置 Cookie（用于从存储中恢复）
+    pub fn set_cookie(&mut self, cookie: &str) {
+        self.cookie = Some(cookie.to_string());
+    }
+
+    /// 获取当前时间戳（毫秒）
+    fn get_timestamp() -> u128 {
+        let start = SystemTime::now();
+        let since_the_epoch = start
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards");
+        since_the_epoch.as_millis()
+    }
+
+    /// 执行登录
+    /// 参考 C:\project\new-school-sdk\test_cufe.py 的实现
+    /// 使用 plaintext 登录 bypass (mmsfjm: '0')
+    pub async fn login(
+        &mut self,
+        credentials: &UserCredentials,
+    ) -> Result<LoginResponse, String> {
+        let timestamp = Self::get_timestamp();
+        let login_url = format!("{}/xtgl/login_slogin.html?time={}", self.base_url, timestamp);
+
+        // 1. GET 请求获取 CSRF Token
+        let response = self.client.get(&login_url)
+            .send()
+            .await
+            .map_err(|e| format!("无法访问登录页面: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("无法访问登录页面: HTTP {}", response.status()));
+        }
+
+        // 打印初始请求的响应头（可能包含 Cookie）
+        println!("=== 初始 GET 请求响应头 ===");
+        let mut cookies_str = String::new();
+        for (key, value) in response.headers() {
+            println!("{}: {:?}", key, value);
+            // 提取 Cookie（GET 请求时就会设置）
+            if key.as_str().eq_ignore_ascii_case("set-cookie") {
+                if let Ok(v) = value.to_str() {
+                    println!("发现 Cookie: {}", v);
+                    if !cookies_str.is_empty() {
+                        cookies_str.push_str("; ");
+                    }
+                    // 提取 cookie 的 key=value 部分
+                    let part = v.split(';').next().unwrap_or(v);
+                    cookies_str.push_str(part);
+                }
+            }
+        }
+        println!("========================");
+
+        // 保存从 GET 请求获取的 Cookie
+        if !cookies_str.is_empty() {
+            self.cookie = Some(cookies_str.clone());
+            println!("从 GET 请求提取的 Cookie: {}", cookies_str);
+        }
+
+        let html_content = response.text().await.map_err(|e| format!("读取登录页面失败: {}", e))?;
+        
+        // 解析 CSRF Token
+        let csrftoken = {
+            let document = Html::parse_document(&html_content);
+            let params_selector = Selector::parse("input#csrftoken").unwrap();
+            document.select(&params_selector).next()
+                .and_then(|el| el.value().attr("value"))
+                .ok_or("无法获取 CSRF Token")?
+                .to_string()
+        };
+
+        println!("获取到 CSRF Token: {}", csrftoken);
+
+        // 2. 构造登录参数
+        // 参考 test_cufe.py: mmsfjm='0' 强制明文传输
+        let params = [
+            ("csrftoken", csrftoken.as_str()),
+            ("yhm", &credentials.username),
+            ("mm", &credentials.password),
+            ("mmsfjm", "0"),
+        ];
+
+        // 3. 发送登录请求
+        let login_submit_url = format!("{}/xtgl/login_slogin.html?time={}", self.base_url, Self::get_timestamp());
+        
+        let response = self.client.post(&login_submit_url)
+            .form(&params)
+            .send()
+            .await
+            .map_err(|e| format!("登录请求失败: {}", e))?;
+
+        if !response.status().is_success() {
+             return Err(format!("登录请求返回错误: HTTP {}", response.status()));
+        }
+
+        // 打印登录响应头（调试用）
+        println!("=== 登录 POST 请求响应头 ===");
+        for (key, value) in response.headers() {
+            println!("{}: {:?}", key, value);
+        }
+        println!("===========================");
+
+        let response_text = response.text().await.map_err(|e| format!("读取登录响应失败: {}", e))?;
+
+        // 4. 验证登录是否成功
+        // 检查返回内容中是否包含用户名（参考 SDK 的 _is_login）
+        if response_text.contains(&format!("value=\"{}\"", credentials.username)) || response_text.contains("xsxx_update.html") {
+            Ok(LoginResponse {
+                success: true,
+                message: "登录成功".to_string(),
+                cookie: self.cookie.clone(),
+            })
+        } else {
+            // 尝试解析错误信息
+            let doc = Html::parse_document(&response_text);
+            let tips_selector = Selector::parse("#tips").unwrap();
+            let error_msg = doc.select(&tips_selector).next()
+                .map(|el| el.text().collect::<Vec<_>>().join(""))
+                .unwrap_or_else(|| "登录失败，可能是用户名或密码错误".to_string());
+            
+            Err(error_msg)
+        }
+    }
+
+    /// 获取课表数据 (CUFE)
+    /// 自动获取当前学期的课表
+    pub async fn get_schedule(&self, year: i32, term: i32) -> Result<Vec<Course>, String> {
+        let url = format!("{}/kbcx/xskbcx_cxXsKb.html?gnmkdm=N2151", self.base_url);
+
+        // 构造请求参数，参考 SDK schedules.py
+        // xqm: 学期码 (3: 第一学期, 12: 第二学期, 16: 第三学期) - 根据 SDK 的 TERM 字典推断
+        // SDK 中 TERM = {1: 3, 2: 12, 3: 16}
+        let term_code = match term {
+            1 => "3",
+            2 => "12",
+            3 => "16",
+            _ => "3", // 默认为第一学期
+        };
+
+        let params = [
+            ("xnm", year.to_string()),
+            ("xqm", term_code.to_string()),
+            ("kzlx", "ck".to_string()),
+        ];
+
+        println!("正在获取课表: xnm={}, xqm={}", year, term_code);
+
+        // reqwest 的 cookie_store 会自动携带之前登录时保存的 cookies
+        let response = self.client.post(&url)
+            .form(&params)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .send()
+            .await
+            .map_err(|e| format!("获取课表请求失败: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("获取课表失败: HTTP {}", response.status()));
+        }
+
+        let json_text = response.text().await.map_err(|e| format!("读取课表数据失败: {}", e))?;
+
+        println!("收到JSON响应，长度: {} 字节", json_text.len());
+
+        // 使用新的 JSON parser 解析课表
+        use crate::parser::parse_cufe_json;
+        parse_cufe_json(&json_text)
+    }
+
+    /// 获取用户个人信息 (CUFE)
+    /// 参考 SDK user_info.py 的实现
+    pub async fn get_user_info(&self) -> Result<crate::models::UserInfo, String> {
+        let url = format!("{}/xsxxxggl/xsgrxxwh_cxXsgrxx.html", self.base_url);
+
+        let params = [
+            ("gnmkdm", "N100801"),
+            ("layout", "default"),
+        ];
+
+        println!("正在获取用户信息...");
+
+        // reqwest 的 cookie_store 会自动携带之前登录时保存的 cookies
+        let response = self.client.get(&url)
+            .query(&params)
+            .send()
+            .await
+            .map_err(|e| format!("获取用户信息请求失败: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("获取用户信息失败: HTTP {}", response.status()));
+        }
+
+        let html_content = response.text().await.map_err(|e| format!("读取用户信息失败: {}", e))?;
+        
+        // 解析 HTML 获取用户基本信息（同步）
+        let mut user_info = self.parse_user_info_html(&html_content)?;
+        
+        // 异步获取照片
+        if !user_info.student_number.is_empty() {
+            match self.fetch_photo_base64(&user_info.student_number).await {
+                Ok(base64_data) => {
+                    user_info.photo_url = Some(base64_data);
+                    println!("照片获取成功");
+                },
+                Err(e) => {
+                    println!("获取照片失败: {}", e);
+                }
+            }
+        }
+        
+        Ok(user_info)
+    }
+
+    /// 解析用户信息 HTML (同步，不含照片)
+    fn parse_user_info_html(&self, html: &str) -> Result<crate::models::UserInfo, String> {
+        let document = Html::parse_document(html);
+        
+        // 定义选择器
+        fn extract_text(doc: &Html, selector_str: &str) -> String {
+            let selector = Selector::parse(selector_str).unwrap();
+            doc.select(&selector)
+                .next()
+                .map(|el| el.text().collect::<Vec<_>>().join("").trim().to_string())
+                .unwrap_or_default()
+        }
+
+        // 根据 SDK 的选择器提取信息
+        // 学号和姓名在 panel-heading 中
+        let student_number = extract_text(&document, "#ajaxForm > div > div.panel-heading > div > div:nth-child(1) > div > div > p");
+        let name = extract_text(&document, "#ajaxForm > div > div.panel-heading > div > div:nth-child(2) > div > div > p");
+        
+        // 其他信息在表单中
+        let department = extract_text(&document, "#col_jg_id > p");
+        let class_name = extract_text(&document, "#col_bh_id > p");
+        let grade = extract_text(&document, "#col_njdm_id > p");
+        let major = extract_text(&document, "#col_zyfx_id > p");
+        let gender = extract_text(&document, "#col_xbm > p");
+
+        println!("解析用户信息: 学号={}, 姓名={}, 学院={}", student_number, name, department);
+
+        // 如果核心信息都为空，可能是登录失效
+        if name.is_empty() && student_number.is_empty() {
+            return Err("无法获取用户信息，可能登录已失效".to_string());
+        }
+
+        Ok(crate::models::UserInfo {
+            student_number,
+            name,
+            department,
+            class_name,
+            grade,
+            major,
+            gender,
+            photo_url: None, // 照片在调用处单独获取
+        })
+    }
+
+    /// 获取照片并转换为 base64
+    async fn fetch_photo_base64(&self, student_number: &str) -> Result<String, String> {
+        use base64::{Engine as _, engine::general_purpose};
+
+        // CUFE 照片 API URL
+        let url = format!("{}/xtgl/photo_cxXszp4.html?xh_id={}&zplx=rxhzp", self.base_url, student_number);
+
+        println!("正在获取照片: {}", url);
+
+        // reqwest 的 cookie_store 会自动携带之前登录时保存的 cookies
+        let response = self.client.get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("获取照片请求失败: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("获取照片失败: HTTP {}", response.status()));
+        }
+
+        // 获取 Content-Type
+        let content_type = response.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("image/jpeg")
+            .to_string();
+
+        // 获取图片数据
+        let bytes = response.bytes().await
+            .map_err(|e| format!("读取照片数据失败: {}", e))?;
+
+        if bytes.is_empty() {
+            return Err("照片数据为空".to_string());
+        }
+
+        // 转换为 base64
+        let base64_data = general_purpose::STANDARD.encode(&bytes);
+        
+        // 构造 data URI
+        let mime_type = if content_type.contains("png") {
+            "image/png"
+        } else if content_type.contains("gif") {
+            "image/gif"
+        } else {
+            "image/jpeg"
+        };
+        
+        let data_uri = format!("data:{};base64,{}", mime_type, base64_data);
+        
+        println!("照片获取成功，大小: {} bytes", bytes.len());
+        
+        Ok(data_uri)
+    }
+}

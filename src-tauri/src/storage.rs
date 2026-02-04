@@ -248,6 +248,51 @@ impl StorageManager {
             .map(|s| s.trim().to_string())
     }
 
+    /// ============================================================
+    /// 凭证管理方法（持久化登录）
+    /// ============================================================
+
+    /// 获取凭证文件路径
+    fn credentials_path(&self) -> std::path::PathBuf {
+        self.data_dir.join("credentials.json")
+    }
+
+    /// 保存加密凭证
+    pub fn save_credentials(&self, credentials: &crate::models::PersistentCredentials) -> Result<(), String> {
+        let path = self.credentials_path();
+        let content = serde_json::to_string_pretty(credentials)
+            .map_err(|e| format!("序列化凭证失败: {}", e))?;
+
+        fs::File::create(&path)
+            .and_then(|mut file| file.write_all(content.as_bytes()))
+            .map_err(|e| format!("创建凭证文件失败 (路径: {}): {}",
+                                path.display(), e))
+    }
+
+    /// 加载加密凭证
+    pub fn load_credentials(&self) -> Result<crate::models::PersistentCredentials, String> {
+        let path = self.credentials_path();
+        if !path.exists() {
+            return Err("未找到保存的凭证".to_string());
+        }
+
+        let content = fs::read_to_string(&path)
+            .map_err(|e| format!("读取凭证文件失败: {}", e))?;
+
+        serde_json::from_str(&content)
+            .map_err(|e| format!("解析凭证文件失败: {}", e))
+    }
+
+    /// 清除所有登录凭证
+    pub fn clear_credentials(&self) -> Result<(), String> {
+        let path = self.credentials_path();
+        if path.exists() {
+            fs::remove_file(&path)
+                .map_err(|e| format!("删除凭证文件失败: {}", e))?;
+        }
+        Ok(())
+    }
+
     /// 删除背景图
     pub fn delete_background(&self, filename: &str) -> Result<(), String> {
         let path = self.background_dir().join(filename);

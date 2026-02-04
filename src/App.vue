@@ -480,7 +480,12 @@
     </div>
 
     <!-- 用户个人中心对话框 -->
-    <UserProfileDialog v-model="showUserProfileDialog" />
+    <UserProfileDialog
+      v-model="showUserProfileDialog"
+      :user-info="globalUserInfo"
+      @login-success="handleLoginSuccess"
+      @logout="handleLogout"
+    />
 
     <!-- 主题切换按钮 -->
     <div class="theme-toggle" @click="toggleTheme" :title="isDark ? '切换亮色模式' : '切换深色模式'">
@@ -523,6 +528,9 @@ const showScheduleManageDialog = ref(false);
 const showUserProfileDialog = ref(false); // 用户个人中心对话框
 // const showScheduleDateDialog = ref(false); // Unused - dialog is deprecated
 const loading = ref(false);
+
+// 全局用户信息状态
+const globalUserInfo = ref<UserInfo | null>(null);
 const isSorting = ref(false); // 排序模式状态
 const showScheduleEditDialog = ref(false);
 const editingScheduleMeta = ref<ScheduleMetadata | undefined>(undefined);
@@ -1108,6 +1116,16 @@ function openSettings() {
   showUserProfileDialog.value = true;
 }
 
+// 登录成功处理
+function handleLoginSuccess(userInfo: UserInfo) {
+  globalUserInfo.value = userInfo;
+}
+
+// 退出登录处理
+function handleLogout() {
+  globalUserInfo.value = null;
+}
+
 // 保存设置
 async function saveSettings() {
   try {
@@ -1122,6 +1140,21 @@ async function saveSettings() {
   } catch (e) {
     ElMessage.error(`保存失败: ${e}`);
   }
+}
+
+// 恢复登录状态（应用启动时调用）- 不阻塞 UI
+function restoreLoginState() {
+  // 不使用 await，让它在后台异步执行
+  invoke<UserInfo>('restore_login_session')
+    .then((userInfo: UserInfo) => {
+      // 登录成功，保存到全局状态
+      console.log('已自动恢复登录状态:', userInfo.name);
+      globalUserInfo.value = userInfo;
+    })
+    .catch((_e) => {
+      // 没有保存的凭证或自动登录失败，这是正常情况
+      console.log('未保存的凭证或自动登录失败，用户需要手动登录');
+    });
 }
 
 // 加载配置
@@ -1157,8 +1190,40 @@ async function loadConfig() {
   }
 }
 
+// 初始化应用数据（异步）
+async function initializeApp() {
+  // 尝试加载缓存
+  const hasCache = await loadCachedSchedule();
+
+  if (hasCache) {
+    await loadConfig();
+  } else {
+    // 如果没有缓存,显示导入对话框
+    console.log('没有缓存课表，显示导入对话框');
+    isImportingFromBrowser.value = true;
+    showImportDialog.value = true;
+  }
+
+  // 初始化深色模式
+  const savedTheme = localStorage.getItem('theme');
+  const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+  if (savedTheme === 'dark' || (!savedTheme && systemDark)) {
+    isDark.value = true;
+    document.documentElement.classList.add('dark');
+    document.documentElement.classList.remove('light');
+  } else {
+    isDark.value = false;
+    document.documentElement.classList.remove('dark');
+    document.documentElement.classList.add('light');
+  }
+}
+
 // 初始化
-onMounted(async () => {
+onMounted(() => {
+  // 异步恢复登录状态（不阻塞 UI）
+  restoreLoginState();
+
   // 设置浏览器导入监听
   setupImportListener(async (result) => {
     // result 包含 { schedule_id, course_count, schedule_name }
@@ -1180,31 +1245,8 @@ onMounted(async () => {
     await loadConfig();
   });
 
-  // 尝试加载缓存
-  const hasCache = await loadCachedSchedule();
-
-  if (hasCache) {
-    await loadConfig();
-  } else {
-    // 如果没有缓存,显示导入对话框
-    console.log('没有缓存课表，显示导入对话框');
-    isImportingFromBrowser.value = true;
-    showImportDialog.value = true;
-  }
-
-  // 初始化深色模式
-  const savedTheme = localStorage.getItem('theme');
-  const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  
-  if (savedTheme === 'dark' || (!savedTheme && systemDark)) {
-    isDark.value = true;
-    document.documentElement.classList.add('dark');
-    document.documentElement.classList.remove('light');
-  } else {
-    isDark.value = false;
-    document.documentElement.classList.add('light');
-    document.documentElement.classList.remove('dark');
-  }
+  // 异步初始化应用数据（不阻塞 UI）
+  initializeApp();
 });
 
 // 深色模式

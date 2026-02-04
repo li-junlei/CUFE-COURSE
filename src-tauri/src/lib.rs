@@ -44,12 +44,187 @@ async fn login_and_get_user_info(
     Ok(user_info)
 }
 
-/// 退出登录
+/// 退出登录（旧版本兼容）
 #[tauri::command]
 fn logout_user(state: tauri::State<'_, Arc<EduSystemState>>) -> Result<(), String> {
     // 清除全局客户端状态（自动清除 cookies）
     state.logout();
     println!("已退出登录");
+    Ok(())
+}
+
+/// ============================================================
+/// 持久化登录相关命令
+/// ============================================================
+
+/// 登录并保存凭证
+#[tauri::command]
+async fn login_and_save_credentials(
+    state: tauri::State<'_, Arc<EduSystemState>>,
+    username: String,
+    password: String,
+) -> Result<crate::models::UserInfo, String> {
+    let credentials = crate::models::UserCredentials {
+        username: username.clone(),
+        password,
+    };
+
+    // 初始化客户端并登录
+    state.initialize_client(username.clone());
+    let mut client = state.get_client()?;
+
+    let login_response = client.login(&credentials).await?;
+    if !login_response.success {
+        state.logout();
+        return Err(format!("登录失败: {}", login_response.message));
+    }
+
+    // 获取用户信息
+    let user_info = client.get_user_info().await?;
+
+    // 加密密码
+    use crate::crypto::encrypt_password_dpapi;
+    let encrypted_password = encrypt_password_dpapi(&credentials.password)
+        .map_err(|e| format!("密码加密失败: {}", e))?;
+
+    // 保存凭证
+    let storage = StorageManager::new()?;
+    let persistent_creds = crate::models::PersistentCredentials {
+        username,
+        password_encrypted: encrypted_password,
+        edu_system_url: "https://xuanke.cufe.edu.cn/jwglxt/".to_string(), // CUFE 教务系统 URL
+        saved_at: chrono::Utc::now().timestamp(),
+    };
+
+    storage.save_credentials(&persistent_creds)
+        .map_err(|e| format!("保存凭证失败: {}", e))?;
+
+    println!("凭证已保存到本地");
+    Ok(user_info)
+}
+
+/// 恢复登录会话（应用启动时调用）
+#[tauri::command]
+async fn restore_login_session(
+    state: tauri::State<'_, Arc<EduSystemState>>,
+) -> Result<crate::models::UserInfo, String> {
+    let storage = StorageManager::new()?;
+
+    // 加载保存的凭证
+    let creds = storage.load_credentials()?;
+
+    // 解密密码
+    use crate::crypto::decrypt_password_dpapi;
+    let password = decrypt_password_dpapi(&creds.password_encrypted)
+        .map_err(|e| format!("密码解密失败: {}", e))?;
+
+    // 重新登录
+    state.initialize_client(creds.username.clone());
+    let mut client = state.get_client()?;
+
+    let credentials = crate::models::UserCredentials {
+        username: creds.username,
+        password,
+    };
+
+    let login_response = client.login(&credentials).await?;
+    if !login_response.success {
+        state.logout();
+        storage.clear_credentials()?; // 清除无效凭证
+        return Err("保存的凭证已失效，请重新登录".to_string());
+    }
+
+    // 获取用户信息
+    let user_info = client.get_user_info().await?;
+
+    println!("已自动恢复登录状态");
+    Ok(user_info)
+}
+
+/// 获取当前登录用户信息（不重新登录）
+#[tauri::command]
+async fn get_current_user_info(
+    state: tauri::State<'_, Arc<EduSystemState>>,
+) -> Result<Option<crate::models::UserInfo>, String> {
+    // 检查是否已登录
+    if !state.is_logged_in() {
+        return Ok(None);
+    }
+
+    // 获取全局 client（复用登录时的会话）
+    let client = state.get_client()?;
+
+    // 获取用户信息（复用现有会话，不需要重新登录）
+    let user_info = client.get_user_info().await?;
+    Ok(Some(user_info))
+}
+
+/// 导入课表（带自动重新登录）
+#[tauri::command]
+async fn import_schedule_with_auto_relogin(
+    state: tauri::State<'_, Arc<EduSystemState>>,
+    year: i32,
+    term: i32,
+    schedule_name: String,
+) -> Result<String, String> {
+    // 尝试使用当前会话导入
+    let import_result = import_schedule_from_saved_login(
+        state.clone(),
+        year,
+        term,
+        schedule_name.clone(),
+    ).await;
+
+    // 如果成功，直接返回
+    if import_result.is_ok() {
+        return import_result;
+    }
+
+    // 如果失败，尝试自动重新登录
+    let storage = StorageManager::new()?;
+
+    // 检查是否有保存的凭证
+    let creds = match storage.load_credentials() {
+        Ok(c) => c,
+        Err(_) => return Err(import_result.unwrap_err()),
+    };
+
+    // 解密密码并重新登录
+    use crate::crypto::decrypt_password_dpapi;
+    let password = decrypt_password_dpapi(&creds.password_encrypted)
+        .map_err(|e| format!("密码解密失败: {}", e))?;
+
+    let credentials = crate::models::UserCredentials {
+        username: creds.username,
+        password,
+    };
+
+    state.auto_relogin(&credentials).await?;
+
+    println!("已自动重新登录，重试导入课表");
+
+    // 重试导入
+    import_schedule_from_saved_login(
+        state,
+        year,
+        term,
+        schedule_name,
+    ).await
+}
+
+/// 退出登录并清除所有凭证
+#[tauri::command]
+async fn logout_and_clear(
+    state: tauri::State<'_, Arc<EduSystemState>>,
+) -> Result<(), String> {
+    // 清除内存状态
+    state.logout();
+
+    // 清除保存的凭证
+    let storage = StorageManager::new()?;
+    storage.clear_credentials()?;
+
+    println!("已退出登录并清除所有凭证");
     Ok(())
 }
 
@@ -789,9 +964,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // 用户相关
             login_and_get_user_info,
+            login_and_save_credentials,
+            restore_login_session,
+            get_current_user_info,
             logout_user,
+            logout_and_clear,
             is_logged_in,
             import_schedule_from_saved_login,
+            import_schedule_with_auto_relogin,
             // 登录相关
             login_and_get_schedule,
             refresh_schedule,

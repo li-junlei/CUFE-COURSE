@@ -140,6 +140,7 @@ import type { UserInfo } from '../types';
 
 interface Props {
   modelValue: boolean;
+  userInfo?: UserInfo | null;  // 新增：从父组件接收
 }
 
 interface Emits {
@@ -161,13 +162,11 @@ const username = ref('');
 const password = ref('');
 const loading = ref(false);
 
-// 用户信息
-const userInfo = ref<UserInfo | null>(null);
+// 用户信息 - 优先使用 prop，fallback 到内部状态
+const internalUserInfo = ref<UserInfo | null>(null);
+const userInfo = computed(() => props.userInfo ?? internalUserInfo.value);
 
-// CUFE 教务系统 URL
-const CUFE_BASE_URL = 'https://xuanke.cufe.edu.cn/jwglxt';
-
-// 登录
+// 登录（带凭证保存）
 async function handleLogin() {
   if (!username.value || !password.value) {
     ElMessage.warning('请输入学号和密码');
@@ -176,15 +175,19 @@ async function handleLogin() {
 
   loading.value = true;
   try {
-    const info = await invoke<UserInfo>('login_and_get_user_info', {
+    // 使用新的登录命令（自动保存凭证）
+    const info = await invoke<UserInfo>('login_and_save_credentials', {
       username: username.value,
       password: password.value,
-      baseUrl: CUFE_BASE_URL,
     });
 
-    userInfo.value = info;
+    // 更新内部状态并通知父组件
+    internalUserInfo.value = info;
     emit('login-success', info);
     ElMessage.success(`登录成功，欢迎 ${info.name || info.student_number}`);
+
+    // 清空密码（安全考虑）
+    password.value = '';
   } catch (e) {
     console.error('登录失败:', e);
     ElMessage.error(`${e}`);
@@ -193,11 +196,12 @@ async function handleLogin() {
   }
 }
 
-// 退出登录
+// 退出登录（清除凭证）
 async function handleLogout() {
   try {
-    await invoke('logout_user');
-    userInfo.value = null;
+    // 使用新的退出登录命令（清除所有凭证）
+    await invoke('logout_and_clear');
+    internalUserInfo.value = null;
     username.value = '';
     password.value = '';
     emit('logout');
@@ -219,10 +223,18 @@ function handleClose() {
   dialogVisible.value = false;
 }
 
-// 对话框打开时重置状态（如果未登录）
-watch(() => props.modelValue, (newVal) => {
+// 对话框打开时检查登录状态
+watch(() => props.modelValue, async (newVal) => {
   if (newVal && !userInfo.value) {
-    // 可以在这里尝试恢复登录状态
+    // 没有用户信息，尝试从后端获取
+    try {
+      const info = await invoke<UserInfo | null>('get_current_user_info');
+      if (info) {
+        internalUserInfo.value = info;
+      }
+    } catch (e) {
+      console.log('获取登录状态失败:', e);
+    }
   }
 });
 </script>

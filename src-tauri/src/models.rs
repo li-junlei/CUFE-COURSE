@@ -242,3 +242,24 @@ impl CachedSchedule {
         now > self.expire_time
     }
 }
+
+/// ============================================================
+/// 持久化登录相关数据结构
+/// ============================================================
+
+/// 持久化凭证 (加密存储)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistentCredentials {
+    pub username: String,              // 学号（明文）
+    pub password_encrypted: String,    // 密码（DPAPI 加密后的 Base64）
+    pub edu_system_url: String,        // 教务系统 URL
+    pub saved_at: i64,                 // 保存时间戳
+}
+
+/// 会话验证结果
+#[derive(Debug, Clone)]
+pub enum SessionStatus {
+    Valid,              // 会话有效
+    Expired,            // 会话过期，需重新登录
+    NotAuthenticated,   // 未登录
+}

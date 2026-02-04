@@ -59,6 +59,27 @@ impl EduSystemState {
         let mut client_guard = self.client.lock().unwrap();
         *client_guard = None;
     }
+
+    /// ============================================================
+    /// 会话管理方法（持久化登录）
+    /// ============================================================
+
+    /// 自动重新登录（使用保存的凭证）
+    pub async fn auto_relogin(&self, credentials: &crate::models::UserCredentials) -> Result<(), String> {
+        // 重新初始化客户端
+        self.initialize_client(credentials.username.clone());
+
+        // 获取客户端并执行登录
+        let mut client = self.get_client()?;
+        let login_response = client.login(credentials).await?;
+
+        if !login_response.success {
+            self.logout();
+            return Err(format!("自动登录失败: {}", login_response.message));
+        }
+
+        Ok(())
+    }
 }
 
 // 为其他线程安全地使用状态实现 Clone
@@ -413,9 +434,19 @@ impl EduSystemClient {
         };
         
         let data_uri = format!("data:{};base64,{}", mime_type, base64_data);
-        
+
         println!("照片获取成功，大小: {} bytes", bytes.len());
-        
+
         Ok(data_uri)
+    }
+
+    /// ============================================================
+    /// 会话验证方法（持久化登录）
+    /// ============================================================
+
+    /// 验证当前会话是否有效
+    /// 通过尝试获取用户信息来验证
+    pub async fn verify_session(&self) -> Result<crate::models::UserInfo, String> {
+        self.get_user_info().await
     }
 }

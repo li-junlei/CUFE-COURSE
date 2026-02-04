@@ -3,18 +3,81 @@ use reqwest::Client;
 use scraper::{Html, Selector};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 /// 教务系统客户端
 pub struct EduSystemClient {
     client: Client,
     base_url: String,
-    cookie: Option<String>,
+    #[allow(dead_code)]
+    cookie: Option<String>,  // 保留以兼容旧代码，但不再使用
+    username: Option<String>,  // 学号，用于查询课表时的 su 参数
+}
+
+/// 全局教务系统状态（用于 Tauri 状态管理）
+pub struct EduSystemState {
+    client: Arc<Mutex<Option<EduSystemClient>>>,
+    base_url: String,
+}
+
+impl EduSystemState {
+    /// 创建新的状态实例
+    pub fn new(base_url: String) -> Self {
+        EduSystemState {
+            client: Arc::new(Mutex::new(None)),
+            base_url,
+        }
+    }
+
+    /// 初始化客户端（登录时调用）
+    pub fn initialize_client(&self, username: String) {
+        let mut client_guard = self.client.lock().unwrap();
+        *client_guard = Some(EduSystemClient::new(self.base_url.clone(), Some(username)));
+    }
+
+    /// 获取客户端引用
+    pub fn get_client(&self) -> Result<EduSystemClient, String> {
+        let client_guard = self.client.lock().unwrap();
+        client_guard.as_ref()
+            .map(|c| EduSystemClient {
+                client: c.client.clone(),
+                base_url: c.base_url.clone(),
+                cookie: c.cookie.clone(),
+                username: c.username.clone(),
+            })
+            .ok_or_else(|| "客户端未初始化，请先登录".to_string())
+    }
+
+    /// 检查是否已登录
+    pub fn is_logged_in(&self) -> bool {
+        let client_guard = self.client.lock().unwrap();
+        client_guard.is_some()
+    }
+
+    /// 登出（清除客户端）
+    pub fn logout(&self) {
+        let mut client_guard = self.client.lock().unwrap();
+        *client_guard = None;
+    }
+}
+
+// 为其他线程安全地使用状态实现 Clone
+impl Clone for EduSystemClient {
+    fn clone(&self) -> Self {
+        EduSystemClient {
+            client: self.client.clone(),
+            base_url: self.base_url.clone(),
+            cookie: None,  // 不再需要克隆 cookie
+            username: self.username.clone(),
+        }
+    }
 }
 
 impl EduSystemClient {
     /// 创建新的客户端
-    pub fn new(base_url: String) -> Self {
+    pub fn new(base_url: String, username: Option<String>) -> Self {
         // 创建一个带有 Cookie 存储的客户端
+        // reqwest 的 cookie_store 会自动管理会话 cookie
         let client = Client::builder()
             .cookie_store(true)
             .timeout(Duration::from_secs(30))
@@ -26,13 +89,9 @@ impl EduSystemClient {
         EduSystemClient {
             client,
             base_url: base_url.trim_end_matches('/').to_string(), // 移除末尾斜杠
-            cookie: None,
+            cookie: None,  // 不再手动管理 cookie
+            username,
         }
-    }
-
-    /// 设置 Cookie（用于从存储中恢复）
-    pub fn set_cookie(&mut self, cookie: &str) {
-        self.cookie = Some(cookie.to_string());
     }
 
     /// 获取当前时间戳（毫秒）
@@ -158,7 +217,11 @@ impl EduSystemClient {
     /// 获取课表数据 (CUFE)
     /// 自动获取当前学期的课表
     pub async fn get_schedule(&self, year: i32, term: i32) -> Result<Vec<Course>, String> {
-        let url = format!("{}/kbcx/xskbcx_cxXsKb.html?gnmkdm=N2151", self.base_url);
+        // 参考 SDK schedules.py：需要 su 参数（学号）
+        let username = self.username.as_ref()
+            .ok_or("获取课表需要学号信息，请重新登录".to_string())?;
+
+        let url = format!("{}/kbcx/xskbcx_cxXsKb.html", self.base_url);
 
         // 构造请求参数，参考 SDK schedules.py
         // xqm: 学期码 (3: 第一学期, 12: 第二学期, 16: 第三学期) - 根据 SDK 的 TERM 字典推断
@@ -170,18 +233,34 @@ impl EduSystemClient {
             _ => "3", // 默认为第一学期
         };
 
-        let params = [
+        // 查询参数（参考 Python SDK）
+        let query_params = [
+            ("gnmkdm", "N2151"),
+            ("su", username),
+        ];
+
+        // POST 数据（表单数据）
+        let form_params = [
             ("xnm", year.to_string()),
             ("xqm", term_code.to_string()),
             ("kzlx", "ck".to_string()),
         ];
 
-        println!("正在获取课表: xnm={}, xqm={}", year, term_code);
+        println!("正在获取课表: su={}, xnm={}, xqm={}", username, year, term_code);
 
-        // reqwest 的 cookie_store 会自动携带之前登录时保存的 cookies
-        let response = self.client.post(&url)
-            .form(&params)
-            .header("Content-Type", "application/x-www-form-urlencoded")
+        // 构建请求 - 如果有手动设置的cookie，需要添加到请求头
+        let mut request = self.client.post(&url)
+            .query(&query_params)  // 添加查询参数 gnmkdm 和 su
+            .form(&form_params)    // 添加表单数据 xnm, xqm, kzlx
+            .header("Content-Type", "application/x-www-form-urlencoded");
+
+        // 如果有手动设置的Cookie（从文件恢复的），手动添加到请求头
+        if let Some(ref cookie) = self.cookie {
+            println!("手动添加Cookie到课表请求: {}", cookie);
+            request = request.header("Cookie", cookie);
+        }
+
+        let response = request
             .send()
             .await
             .map_err(|e| format!("获取课表请求失败: {}", e))?;

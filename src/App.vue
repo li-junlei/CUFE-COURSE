@@ -883,6 +883,17 @@ async function handleSwitchSchedule(scheduleId: string) {
     showScheduleManageDialog.value = false;
     ElMessage.success('切换成功');
     await loadConfig();
+
+    // 调试：打印课程数据
+    console.log('=== 课程数据调试 ===');
+    console.log('当前周次:', currentWeek.value);
+    console.log('课程数量:', courses.value.length);
+    console.log('课程数据:', courses.value);
+    if (courses.value.length > 0) {
+      console.log('第一门课程:', courses.value[0]);
+      console.log('第一门课程的周次:', courses.value[0].weeks);
+      console.log('是否包含当前周次:', courses.value[0].weeks.includes(currentWeek.value));
+    }
   } catch (e) {
     ElMessage.error(`切换失败: ${e}`);
   }

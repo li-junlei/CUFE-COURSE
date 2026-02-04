@@ -3,44 +3,40 @@ mod crypto;
 mod client;
 mod storage;
 
-use client::EduSystemClient;
+use client::EduSystemState;
 use models::{AppConfig, CachedSchedule, Course, ScheduleMetadata, UserCredentials, TimeTable, UserInfo};
 use storage::StorageManager;
 use chrono::{Utc, Duration, Datelike};
 use std::fs;
 use std::collections::HashSet;
 use tauri::{Manager, Emitter};
+use std::sync::Arc;
 
 // ============== Tauri Commands ==============
 
 /// 登录并获取用户信息（不获取课表）
 #[tauri::command]
 async fn login_and_get_user_info(
+    state: tauri::State<'_, Arc<EduSystemState>>,
     username: String,
     password: String,
-    base_url: String,
 ) -> Result<UserInfo, String> {
-    let credentials = UserCredentials { username, password };
-    let mut client = EduSystemClient::new(base_url);
+    let credentials = UserCredentials {
+        username: username.clone(),
+        password,
+    };
+
+    // 初始化全局 client
+    state.initialize_client(username.clone());
+    let mut client = state.get_client()?;
 
     // 执行登录
     let login_response = client.login(&credentials).await?;
     if !login_response.success {
+        // 登录失败，清除状态
+        state.logout();
         return Err(format!("登录失败: {}", login_response.message));
     }
-
-    // 检查 Cookie 是否存在
-    let cookie = login_response.cookie.ok_or_else(|| {
-        "登录成功但未获取到会话信息，请稍后重试".to_string()
-    })?;
-
-    // 保存 Cookie（失败则返回错误，中断登录流程）
-    let storage = StorageManager::new()?;
-    println!("准备保存登录信息，路径: {:?}", storage.cookie_path());
-    storage.save_cookie(&cookie).map_err(|e| {
-        format!("保存登录信息失败: {}，请检查文件系统权限", e)
-    })?;
-    println!("登录信息保存成功，Cookie 长度: {} 字节", cookie.len());
 
     // 获取用户信息
     let user_info = client.get_user_info().await?;
@@ -50,45 +46,34 @@ async fn login_and_get_user_info(
 
 /// 退出登录
 #[tauri::command]
-fn logout_user() -> Result<(), String> {
-    let storage = StorageManager::new()?;
-
-    // 删除保存的 Cookie（使用统一的路径方法）
-    let cookie_path = storage.cookie_path();
-    println!("准备删除登录信息，路径: {:?}", cookie_path);
-
-    if cookie_path.exists() {
-        std::fs::remove_file(&cookie_path)
-            .map_err(|e| format!("删除登录信息失败: {}", e))?;
-        println!("登录信息已删除");
-    } else {
-        println!("登录信息文件不存在，无需删除");
-    }
-
+fn logout_user(state: tauri::State<'_, Arc<EduSystemState>>) -> Result<(), String> {
+    // 清除全局客户端状态（自动清除 cookies）
+    state.logout();
+    println!("已退出登录");
     Ok(())
+}
+
+/// 检查是否已登录
+#[tauri::command]
+fn is_logged_in(state: tauri::State<'_, Arc<EduSystemState>>) -> bool {
+    state.is_logged_in()
 }
 
 /// 使用已保存的登录状态导入课表
 #[tauri::command]
 async fn import_schedule_from_saved_login(
+    state: tauri::State<'_, Arc<EduSystemState>>,
     year: i32,
     term: i32,
     schedule_name: String,
 ) -> Result<String, String> {
-    let storage = StorageManager::new()?;
+    // 检查是否已登录
+    if !state.is_logged_in() {
+        return Err("未找到登录信息，请先在个人中心登录".to_string());
+    }
 
-    // 加载已保存的 Cookie
-    println!("准备加载登录信息，路径: {:?}", storage.cookie_path());
-    let cookie = storage.load_cookie()
-        .map_err(|_| "未找到登录信息，请先在个人中心登录".to_string())?;
-    println!("登录信息加载成功，Cookie 长度: {} 字节", cookie.len());
-
-    // CUFE 教务系统 URL
-    let base_url = "https://xuanke.cufe.edu.cn/jwglxt";
-
-    // 创建客户端并设置 Cookie
-    let mut client = EduSystemClient::new(base_url.to_string());
-    client.set_cookie(&cookie);
+    // 获取全局 client（复用登录时的会话）
+    let client = state.get_client()?;
 
     // 获取课表
     let courses = client.get_schedule(year, term).await?;
@@ -96,6 +81,8 @@ async fn import_schedule_from_saved_login(
     if courses.is_empty() {
         return Err("该学期暂无课程".to_string());
     }
+
+    let storage = StorageManager::new()?;
 
     // 生成课表 ID
     let schedule_id = StorageManager::generate_schedule_id();
@@ -136,16 +123,24 @@ async fn import_schedule_from_saved_login(
 /// 登录并获取课表
 #[tauri::command]
 async fn login_and_get_schedule(
+    state: tauri::State<'_, Arc<EduSystemState>>,
     username: String,
     password: String,
-    base_url: String,
 ) -> Result<Vec<Course>, String> {
-    let credentials = UserCredentials { username, password };
-    let mut client = EduSystemClient::new(base_url);
+    let credentials = UserCredentials {
+        username: username.clone(),
+        password,
+    };
+
+    // 初始化全局 client
+    state.initialize_client(username.clone());
+    let mut client = state.get_client()?;
 
     // 执行登录
     let login_response = client.login(&credentials).await?;
     if !login_response.success {
+        // 登录失败，清除状态
+        state.logout();
         return Err(format!("登录失败: {}", login_response.message));
     }
 
@@ -167,7 +162,7 @@ async fn login_and_get_schedule(
     let mut tasks = vec![
         (current_year, current_term),
     ];
-    
+
     // 如果是第二学期，失败后尝试第一学期
     if current_term == 2 {
         tasks.push((current_year, 1));
@@ -207,33 +202,24 @@ async fn login_and_get_schedule(
     }
 
     if final_courses.is_empty() {
+        // 清除登录状态
+        state.logout();
         return Err(format!("无法获取课表: {}", last_error));
-    }
-
-    // 保存 Cookie
-    if let Some(cookie) = login_response.cookie {
-        let storage = StorageManager::new()?;
-        println!("准备保存登录信息，路径: {:?}", storage.cookie_path());
-        storage.save_cookie(&cookie).map_err(|e| {
-            format!("保存登录信息失败: {}，请检查文件系统权限", e)
-        })?;
-        println!("登录信息保存成功，Cookie 长度: {} 字节", cookie.len());
     }
 
     Ok(final_courses)
 }
 
-/// 刷新课表数据（使用已保存的 Cookie）
+/// 刷新课表数据（使用全局 client）
 #[tauri::command]
-async fn refresh_schedule(base_url: String) -> Result<Vec<Course>, String> {
-    let storage = StorageManager::new()?;
+async fn refresh_schedule(state: tauri::State<'_, Arc<EduSystemState>>) -> Result<Vec<Course>, String> {
+    // 检查是否已登录
+    if !state.is_logged_in() {
+        return Err("未找到登录信息，请先在个人中心登录".to_string());
+    }
 
-    // 加载 Cookie
-    let cookie = storage.load_cookie()?;
-
-    // 创建客户端并设置 Cookie
-    let mut client = EduSystemClient::new(base_url);
-    client.set_cookie(&cookie);
+    // 获取全局 client（复用登录时的会话）
+    let client = state.get_client()?;
 
     // 计算当前学期
     let now = Utc::now();
@@ -792,14 +778,19 @@ async fn import_from_browser(app: tauri::AppHandle, html: String, name: Option<S
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // CUFE 教务系统 URL
+    let base_url = "https://xuanke.cufe.edu.cn/jwglxt".to_string();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .manage(Arc::new(EduSystemState::new(base_url)))
         .invoke_handler(tauri::generate_handler![
             // 用户相关
             login_and_get_user_info,
             logout_user,
+            is_logged_in,
             import_schedule_from_saved_login,
             // 登录相关
             login_and_get_schedule,

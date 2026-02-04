@@ -900,15 +900,40 @@ pub fn parse_cufe_json(json_text: &str) -> Result<Vec<Course>, String> {
     use serde_json::Value;
 
     println!("=== 开始解析 CUFE JSON 课表 ===");
+    println!("原始响应长度: {} 字节", json_text.len());
+
+    // 打印前200个字符用于调试
+    let preview = if json_text.len() > 200 {
+        &json_text[..200]
+    } else {
+        json_text
+    };
+    println!("原始响应预览:\n{}", preview);
+
+    // 尝试移除BOM和其他可能的干扰字符
+    let cleaned_text = json_text.trim().trim_start_matches('\u{feff}').trim_start_matches('\u{200b}');
+
+    // 检查是否是HTML响应（错误页面）
+    if cleaned_text.starts_with("<!DOCTYPE") || cleaned_text.starts_with("<html") || cleaned_text.starts_with("<HTML") {
+        return Err("服务器返回了HTML页面而不是JSON，可能是登录已失效".to_string());
+    }
 
     // 解析 JSON
-    let json: Value = serde_json::from_str(json_text)
-        .map_err(|e| format!("解析JSON失败: {}", e))?;
+    let json: Value = serde_json::from_str(cleaned_text)
+        .map_err(|e| {
+            // 提供更详细的错误信息
+            let error_preview = if cleaned_text.len() > 100 {
+                &cleaned_text[..100]
+            } else {
+                cleaned_text
+            };
+            format!("解析JSON失败: {}\n实际内容前100字符: {}", e, error_preview)
+        })?;
 
     // 提取 kbList 数组
     let kb_list = json.get("kbList")
         .and_then(|v| v.as_array())
-        .ok_or("JSON中未找到kbList字段")?;
+        .ok_or("JSON中未找到kbList字段，可能是API返回格式已变更")?;
 
     println!("找到 {} 条课程记录", kb_list.len());
 

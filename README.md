@@ -4,7 +4,7 @@
 
 基于 [Tauri 2.0](https://tauri.app/) + [Vue 3](https://vuejs.org/) + [TypeScript](https://www.typescriptlang.org/) 构建
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/lijunlei/course-schedule-desktop)
+[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/lijunlei/course-schedule-desktop)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-FFC131.svg)](https://tauri.app/)
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D.svg)](https://vuejs.org/)
@@ -40,6 +40,16 @@
 ---
 
 ## 版本历史
+
+### v2.1.0 (2026-02-05)
+- ✨ **新增课表在线更新功能**
+  - 支持从教务系统重新获取最新课表数据
+  - 智能差异统计：显示新增/删除/修改的课程数量
+  - 会话失效时自动重登录，无需手动输入密码
+- 💾 自动保存学年学期信息，便于后续更新
+- 🎨 课表管理界面显示学年学期，新增专用的更新按钮
+- ♻️ 完全向后兼容，旧课表（无学年学期）不影响使用
+- 🎯 友好的用户提示和错误处理
 
 ### v2.0.0 (2026-02-04)
 - ✨ **新增持久化登录功能**

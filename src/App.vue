@@ -263,23 +263,39 @@
                 </div>
                 <div class="item-meta">
                   <span><el-icon><Collection /></el-icon> {{ schedule.course_count }} 门课</span>
+                  <span v-if="schedule.school_year && schedule.school_term">
+                    <el-icon><Calendar /></el-icon>
+                    {{ schedule.school_year }}-{{ schedule.school_year + 1 }}学年第{{ schedule.school_term }}学期
+                  </span>
                 </div>
               </div>
               
               <div class="item-actions">
-                <el-button 
-                  circle 
-                  text 
+                <el-button
+                  circle
+                  text
                   @click.stop="handleEditSchedule(schedule)"
                   class="action-btn"
                   title="编辑设置"
                 >
                   <el-icon><Edit /></el-icon>
                 </el-button>
-                <el-button 
-                  circle 
-                  text 
-                  type="danger" 
+                <el-button
+                  v-if="canUpdateSchedule(schedule)"
+                  circle
+                  text
+                  type="primary"
+                  @click.stop="handleUpdateSchedule(schedule)"
+                  class="action-btn primary"
+                  title="更新课表"
+                  :loading="updatingScheduleId === schedule.id"
+                >
+                  <el-icon><Refresh /></el-icon>
+                </el-button>
+                <el-button
+                  circle
+                  text
+                  type="danger"
                   @click.stop="handleDeleteSchedule(schedule.id)"
                   class="action-btn danger"
                   title="删除课表"
@@ -502,7 +518,7 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { ElMessage, ElConfigProvider } from 'element-plus';
 import zhCn from 'element-plus/es/locale/lang/zh-cn';
-import { MoreFilled, ArrowDown, Loading, Plus, Picture, Delete, Close, Calendar, Collection, Sunny, Moon, Upload, Timer, User, Location, Edit, Check, Grid, View } from '@element-plus/icons-vue';
+import { MoreFilled, ArrowDown, Loading, Plus, Picture, Delete, Close, Calendar, Collection, Sunny, Moon, Upload, Timer, User, Location, Edit, Check, Grid, View, Refresh } from '@element-plus/icons-vue';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
@@ -516,7 +532,7 @@ import CourseGrid from './components/CourseGrid.vue';
 import ScheduleEditDialog from './components/ScheduleEditDialog.vue';
 import ImportScheduleDialog from './components/ImportScheduleDialog.vue';
 import UserProfileDialog from './components/UserProfileDialog.vue';
-import type { AppConfig, ScheduleMetadata, EduSystem, UserInfo } from './types';
+import type { AppConfig, ScheduleMetadata, EduSystem, UserInfo, ScheduleDiff } from './types';
 
 // UI 状态
 const showPopup = ref(false);
@@ -572,6 +588,7 @@ const courseColors = getShuffledColors();
 // 课表管理
 const scheduleList = ref<ScheduleMetadata[]>([]);
 const currentScheduleId = ref<string>();
+const updatingScheduleId = ref<string | null>(null);
 
 // Computed: 当前激活的课表元数据
 const activeSchedule = computed(() => {
@@ -956,6 +973,60 @@ function handleEditSchedule(schedule: ScheduleMetadata) {
     showScheduleEditDialog.value = true;
     console.log('showScheduleEditDialog set to:', showScheduleEditDialog.value);
     console.log('editingScheduleMeta set to:', editingScheduleMeta.value);
+}
+
+// 判断课表是否可以更新 (有学年学期信息)
+function canUpdateSchedule(schedule: ScheduleMetadata): boolean {
+  return schedule.school_year !== undefined && schedule.school_term !== undefined;
+}
+
+// 处理课表更新
+async function handleUpdateSchedule(schedule: ScheduleMetadata) {
+  updatingScheduleId.value = schedule.id;
+
+  try {
+    // 调用后端更新命令
+    const diff = await invoke<ScheduleDiff>('update_schedule_with_diff', {
+      scheduleId: schedule.id,
+    });
+
+    // 构建结果消息
+    let message = `更新完成！\n未变化: ${diff.unchanged_count} 门课`;
+    if (diff.added_count > 0) message += `\n➕ 新增: ${diff.added_count} 门课`;
+    if (diff.modified_count > 0) message += `\n🔄 修改: ${diff.modified_count} 门课`;
+    if (diff.removed_count > 0) message += `\n➖ 删除: ${diff.removed_count} 门课`;
+
+    // 显示成功消息
+    ElMessage.success({
+      message,
+      duration: 5000,
+      showClose: true,
+    });
+
+    // 重新加载课表列表
+    await loadScheduleList();
+
+    // 如果更新的课表是当前课表，重新加载课程数据
+    if (currentScheduleId.value === schedule.id) {
+      await loadCachedSchedule(schedule.id);
+    }
+  } catch (e) {
+    console.error('更新课表失败:', e);
+
+    // 根据错误类型显示不同提示
+    const errorMsg = String(e);
+    if (errorMsg.includes('没有学年学期信息')) {
+      ElMessage.error('该课表没有学年学期信息，无法更新。请删除后重新导入。');
+    } else if (errorMsg.includes('未找到登录信息') || errorMsg.includes('请先登录')) {
+      ElMessage.error('未登录，请先在个人中心登录');
+    } else if (errorMsg.includes('登录已失效')) {
+      ElMessage.error('登录已失效，请重新登录');
+    } else {
+      ElMessage.error(`更新失败: ${errorMsg}`);
+    }
+  } finally {
+    updatingScheduleId.value = null;
+  }
 }
 
 // 确认导入课表

@@ -168,6 +168,8 @@ pub struct ScheduleMetadata {
     pub weeks_count: Option<i32>, // 学期周数 (默认20)
     pub time_table_id: Option<String>, // 关联的时间表ID
     pub sort_index: Option<i32>, // 排序索引
+    pub school_year: Option<i32>,   // 学年 (如 2024)
+    pub school_term: Option<i32>,   // 学期 (1, 2, 3)
 }
 
 impl Default for AppConfig {
@@ -233,6 +235,8 @@ pub struct CachedSchedule {
     pub weeks_count: Option<i32>, // 学期周数
     pub time_table_id: Option<String>, // 关联的时间表ID
     pub sort_index: Option<i32>, // 排序索引
+    pub school_year: Option<i32>,   // 学年
+    pub school_term: Option<i32>,   // 学期
 }
 
 impl CachedSchedule {
@@ -262,4 +266,25 @@ pub enum SessionStatus {
     Valid,              // 会话有效
     Expired,            // 会话过期，需重新登录
     NotAuthenticated,   // 未登录
+}
+
+/// ============================================================
+/// 课表更新相关数据结构
+/// ============================================================
+
+/// 课表更新差异统计
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleDiff {
+    pub added_count: usize,        // 新增课程数
+    pub removed_count: usize,      // 删除课程数
+    pub modified_count: usize,     // 修改课程数
+    pub unchanged_count: usize,    // 未变课程数
+}
+
+/// 课程变更详情
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CourseChange {
+    pub old_course: Course,  // 旧课程数据
+    pub new_course: Course,  // 新课程数据
+    pub changes: Vec<String>, // 变更描述
 }

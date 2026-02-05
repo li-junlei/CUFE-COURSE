@@ -111,6 +111,10 @@ export interface ScheduleMetadata {
   time_table_id?: string;
   /** 排序索引 */
   sort_index?: number;
+  /** 学年 (如 2024) */
+  school_year?: number;
+  /** 学期 (1, 2, 3) */
+  school_term?: number;
 }
 
 /**
@@ -133,5 +137,19 @@ export interface UserInfo {
   gender: string;
   /** 照片URL */
   photo_url?: string;
+}
+
+/**
+ * 课表更新差异统计
+ */
+export interface ScheduleDiff {
+  /** 新增课程数 */
+  added_count: number;
+  /** 删除课程数 */
+  removed_count: number;
+  /** 修改课程数 */
+  modified_count: number;
+  /** 未变课程数 */
+  unchanged_count: number;
 }
 

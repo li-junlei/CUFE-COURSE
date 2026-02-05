@@ -163,6 +163,8 @@ impl StorageManager {
                     weeks_count: cached.weeks_count,
                     time_table_id: cached.time_table_id.clone(),
                     sort_index: cached.sort_index,
+                    school_year: cached.school_year,
+                    school_term: cached.school_term,
                 };
                 schedules.push(metadata);
             }

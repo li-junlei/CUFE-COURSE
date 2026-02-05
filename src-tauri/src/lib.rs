@@ -234,6 +234,66 @@ fn is_logged_in(state: tauri::State<'_, Arc<EduSystemState>>) -> bool {
     state.is_logged_in()
 }
 
+/// 计算两个课表之间的差异
+fn calculate_schedule_diff(
+    old_courses: &[Course],
+    new_courses: &[Course],
+) -> crate::models::ScheduleDiff {
+    use std::collections::HashMap;
+
+    // 为课程生成唯一键 (name + day_of_week + periods)
+    fn course_key(course: &Course) -> String {
+        format!("{}|{}|{:?}", course.name, course.day_of_week, course.periods)
+    }
+
+    // 构建课程映射
+    let old_map: HashMap<String, &Course> = old_courses
+        .iter()
+        .map(|c| (course_key(c), c))
+        .collect();
+    let new_map: HashMap<String, &Course> = new_courses
+        .iter()
+        .map(|c| (course_key(c), c))
+        .collect();
+
+    let mut added_count = 0;
+    let mut removed_count = 0;
+    let mut modified_count = 0;
+
+    // 查找新增和修改的课程
+    for (key, new_course) in &new_map {
+        match old_map.get(key) {
+            Some(old_course) => {
+                // 检查是否有变化（排除时间的字段）
+                if old_course.teacher != new_course.teacher
+                    || old_course.location != new_course.location
+                    || old_course.weeks != new_course.weeks
+                    || old_course.week_type != new_course.week_type
+                {
+                    modified_count += 1;
+                }
+            }
+            None => added_count += 1,
+        }
+    }
+
+    // 查找删除的课程
+    for (key, _) in &old_map {
+        if !new_map.contains_key(key) {
+            removed_count += 1;
+        }
+    }
+
+    let unchanged_count = new_courses.len() - added_count - modified_count;
+
+    crate::models::ScheduleDiff {
+        added_count,
+        removed_count,
+        modified_count,
+        unchanged_count,
+    }
+}
+
 /// 使用已保存的登录状态导入课表
 #[tauri::command]
 async fn import_schedule_from_saved_login(
@@ -282,6 +342,8 @@ async fn import_schedule_from_saved_login(
         weeks_count: None,
         time_table_id: None,
         sort_index: Some(sort_index),
+        school_year: Some(year),
+        school_term: Some(term),
     };
 
     storage.save_schedule(&cached)?;
@@ -292,6 +354,60 @@ async fn import_schedule_from_saved_login(
     storage.save_config(&config)?;
 
     Ok(schedule_id)
+}
+
+/// 更新课表并返回差异统计
+#[tauri::command]
+async fn update_schedule_with_diff(
+    state: tauri::State<'_, Arc<EduSystemState>>,
+    schedule_id: String,
+) -> Result<crate::models::ScheduleDiff, String> {
+    let storage = StorageManager::new()?;
+
+    // 1. 加载现有课表
+    let old_schedule = storage.load_schedule(&schedule_id)?;
+
+    // 2. 获取学年学期信息
+    let (year, term) = match (old_schedule.school_year, old_schedule.school_term) {
+        (Some(y), Some(t)) => (y, t),
+        _ => return Err("该课表没有学年学期信息，无法更新。请删除后重新导入。".to_string()),
+    };
+
+    // 3. 检查登录状态，如未登录则尝试自动重登录
+    if !state.is_logged_in() {
+        // 尝试加载保存的凭证并自动登录
+        match storage.load_credentials() {
+            Ok(creds) => {
+                use crate::crypto::decrypt_password_dpapi;
+                let password = decrypt_password_dpapi(&creds.password_encrypted)?;
+                let credentials = crate::models::UserCredentials {
+                    username: creds.username,
+                    password,
+                };
+                state.auto_relogin(&credentials).await?;
+            }
+            Err(_) => return Err("未找到登录信息，请先在个人中心登录".to_string()),
+        }
+    }
+
+    // 4. 获取最新课表数据
+    let client = state.get_client()?;
+    let new_courses = client.get_schedule(year, term).await?;
+
+    if new_courses.is_empty() {
+        return Err("该学期暂无课程".to_string());
+    }
+
+    // 5. 计算差异
+    let diff = calculate_schedule_diff(&old_schedule.courses, &new_courses);
+
+    // 6. 保存新课表数据
+    let mut updated_schedule = old_schedule.clone();
+    updated_schedule.courses = new_courses;
+    updated_schedule.timestamp = chrono::Utc::now().timestamp();
+    storage.save_schedule(&updated_schedule)?;
+
+    Ok(diff)
 }
 
 
@@ -486,6 +602,8 @@ fn save_schedule_cache(
         weeks_count,
         time_table_id,
         sort_index,
+        school_year: None,
+        school_term: None,
     };
 
     storage.save_schedule(&cached)?;
@@ -921,11 +1039,13 @@ async fn import_from_browser(app: tauri::AppHandle, html: String, name: Option<S
         courses,
         timestamp: now,
         expire_time,
-        first_day: None, 
+        first_day: None,
         max_periods: None,
         weeks_count: None,
         time_table_id: None,
         sort_index: Some(sort_index),
+        school_year: None,
+        school_term: None,
     };
 
     storage.save_schedule(&cached)?;
@@ -972,6 +1092,7 @@ pub fn run() {
             is_logged_in,
             import_schedule_from_saved_login,
             import_schedule_with_auto_relogin,
+            update_schedule_with_diff,
             // 登录相关
             login_and_get_schedule,
             refresh_schedule,

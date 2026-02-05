@@ -11,6 +11,7 @@
   >
     <div
       class="card-inner"
+      :class="{ 'exam-card': course.courseType === 'exam' }"
       :style="{
         backgroundColor: color,
         opacity: cardOpacity / 100
@@ -18,7 +19,16 @@
     >
       <div class="card-content-wrapper">
         <div class="course-name">{{ course.name }}</div>
-        <div class="course-location" v-if="showLocation && course.location">@{{ course.location }}</div>
+
+        <!-- 考试时间（仅考试且有 examInfo 时显示） -->
+        <div v-if="course.courseType === 'exam' && course.examInfo" class="exam-datetime">
+          {{ formatExamDate(course.examInfo.date) }}
+          <br>
+          {{ course.examInfo.startTime }}-{{ course.examInfo.endTime }}
+        </div>
+
+        <!-- 教师和地点（常规课程显示） -->
+        <div class="course-location" v-if="showLocation && course.location">@{{ formattedLocation }}</div>
         <div class="course-teacher" v-if="showTeacher && course.teacher">{{ course.teacher }}</div>
       </div>
     </div>
@@ -37,6 +47,7 @@ interface Props {
   cardOpacity?: number;
   showTeacher?: boolean;
   showLocation?: boolean;
+  simplifiedLocation?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -44,6 +55,19 @@ const props = withDefaults(defineProps<Props>(), {
   cardOpacity: 95,
   showTeacher: true,
   showLocation: true,
+  simplifiedLocation: false,
+});
+
+/**
+ * 格式化地点显示
+ */
+const formattedLocation = computed(() => {
+  const loc = props.course.location || '';
+  if (!props.simplifiedLocation) return loc;
+
+  // 移除常见的校区前缀，支持更多格式
+  // 匹配: "沙河校区", "学院南路校区", "沙河", "南路", "学院南路" 等及其后的空格
+  return loc.replace(/(沙河校区|学院南路校区|沙河|南路|学院南路)\s*/g, '');
 });
 
 /**
@@ -56,7 +80,7 @@ const isVisible = computed(() => {
   const inRange = course.weeks.includes(week);
 
   // 检查单双周 (作为备用逻辑)
-  const weekMatch = course.week_type === 0 || (course.week_type == 1 && week % 2 != 0) || (course.week_type == 2 && week % 2 == 0);
+  const weekMatch = course.weekType === 0 || (course.weekType == 1 && week % 2 != 0) || (course.weekType == 2 && week % 2 == 0);
 
   return inRange && weekMatch;
 });
@@ -85,7 +109,7 @@ const topPosition = computed(() => {
  * 计算左侧位置
  */
 const leftPosition = computed(() => {
-  const dayOfWeek = props.course.day_of_week;
+  const dayOfWeek = props.course.dayOfWeek;
   return `${(dayOfWeek - 1) * (100 / 7)}%`;
 });
 
@@ -116,6 +140,16 @@ const emit = defineEmits<{
 function handleClick() {
   console.log('CourseCard clicked:', props.course.name);
   emit('click', props.course);
+}
+
+/**
+ * 格式化考试日期为简短格式
+ */
+function formatExamDate(dateStr: string): string {
+  const date = new Date(dateStr);
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  return `${month}月${day}日`;
 }
 </script>
 
@@ -202,5 +236,45 @@ function handleClick() {
   -webkit-box-orient: vertical;
   overflow: hidden;
   margin-top: 2px;
+}
+
+/* 考试卡片样式 */
+.exam-card {
+  background: linear-gradient(135deg, #ff6b6b 0%, #ff8787 100%) !important;
+  border: 2px solid #ff5252 !important;
+  box-shadow: 0 2px 8px rgba(255, 107, 107, 0.3) !important;
+}
+
+.exam-card:hover {
+  box-shadow: 0 4px 16px rgba(255, 107, 107, 0.5) !important;
+}
+
+.exam-card .course-name {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.exam-badge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #ff5252;
+  padding: 2px 6px;
+  font-size: 9px;
+  border-radius: 4px;
+  font-weight: bold;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+}
+
+.exam-datetime {
+  font-size: 10px;
+  margin-top: 4px;
+  line-height: 1.3;
+  opacity: 0.95;
+  font-weight: 600;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
 }
 </style>

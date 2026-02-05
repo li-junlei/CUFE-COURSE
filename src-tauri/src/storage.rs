@@ -157,7 +157,10 @@ impl StorageManager {
                     name: cached.name.clone(),
                     created_at: cached.timestamp,
                     updated_at: cached.timestamp,
-                    course_count: cached.courses.len(),
+                    // 课程数统计排除考试
+                    course_count: cached.courses.iter()
+                        .filter(|c| c.course_type != crate::models::CourseType::Exam)
+                        .count(),
                     first_day: cached.first_day,
                     max_periods: cached.max_periods,
                     weeks_count: cached.weeks_count,

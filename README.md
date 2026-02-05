@@ -4,7 +4,7 @@
 
 基于 [Tauri 2.0](https://tauri.app/) + [Vue 3](https://vuejs.org/) + [TypeScript](https://www.typescriptlang.org/) 构建
 
-[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/lijunlei/course-schedule-desktop)
+[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/lijunlei/course-schedule-desktop)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-FFC131.svg)](https://tauri.app/)
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D.svg)](https://vuejs.org/)
@@ -15,6 +15,7 @@
 
 ### 核心功能
 - **一键课表导入** - 直接从中央财经大学教务系统导入课程数据
+- **考试日程同步** - 支持一键获取并导入考试安排，自动合并到当前课表
 - **持久化登录** - 安全保存登录凭证，重启应用自动恢复登录状态
 - **多课表管理** - 创建、切换、重命名、删除、排序多个课表
 - **智能周数管理** - 自动根据学期设置显示周数范围（10-30周灵活配置）
@@ -40,6 +41,16 @@
 ---
 
 ## 版本历史
+
+### v2.2.0 (2026-02-06)
+- ✨ **新增考试日程导入功能**
+  - 支持一键从教务系统获取考试安排
+  - 自动将考试信息合并到当前课表中
+  - 智能去重，避免重复添加
+- 🐛 **优化课表导入体验**
+  - 导入新课表后不再自动切换，防止 UI 状态不同步
+  - 修复了课表管理列表与主界面显示不一致的问题
+- 🎨 界面细节优化与性能提升
 
 ### v2.1.0 (2026-02-05)
 - ✨ **新增课表在线更新功能**
@@ -139,6 +150,13 @@
 - **排序**: 拖拽课表卡片调整顺序
 - **编辑**: 点击编辑图标修改学期设置和时间表方案
 - **删除**: 点击删除图标移除不需要的课表
+
+### 考试日程
+1. 打开"课表管理"
+2. 找到对应的课表卡片
+3. 点击"导入考试"图标（黄色文档图标）
+4. 系统会自动获取考试安排并合并到当前课表中
+> **注意**：需先在课表编辑中设置正确的"学年学期"和"第一周起始日"
 
 ### 自定义时间表
 

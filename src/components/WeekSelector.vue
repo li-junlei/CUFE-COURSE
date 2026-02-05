@@ -67,7 +67,7 @@ const weekDotStatus = computed(() => {
 
     // 计算点阵索引
     const periodIndex = Math.floor((course.periods[0] - 1) / 2); // 0-4
-    const dayIndex = course.day_of_week - 1; // 0-6
+    const dayIndex = course.dayOfWeek - 1; // 0-6
     const dotIndex = periodIndex * 7 + dayIndex; // 0-34
 
     if (dotIndex >= 0 && dotIndex < 35) {
@@ -75,7 +75,7 @@ const weekDotStatus = computed(() => {
         dots[dotIndex] = {
           weeks: course.weeks,
           periodCount: course.periods.length,
-          weekType: course.week_type,
+          weekType: course.weekType,
         };
       }
     }

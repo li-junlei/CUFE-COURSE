@@ -234,6 +234,77 @@ fn is_logged_in(state: tauri::State<'_, Arc<EduSystemState>>) -> bool {
     state.is_logged_in()
 }
 
+/// 获取考试安排并导入到课表
+#[tauri::command]
+async fn fetch_and_import_exams(
+    state: tauri::State<'_, Arc<EduSystemState>>,
+    schedule_id: String,
+) -> Result<Vec<Course>, String> {
+    // 加载课表元数据
+    let storage = StorageManager::new()?;
+    let schedule = storage.load_schedule(&schedule_id)?;
+
+    // 检查是否有学年学期信息
+    let school_year = schedule.school_year
+        .ok_or("课表缺少学年信息，请先编辑课表填写学年学期")?;
+    let school_term = schedule.school_term
+        .ok_or("课表缺少学期信息，请先编辑课表填写学年学期")?;
+
+    // 检查是否有第一天信息
+    let first_day = schedule.first_day
+        .ok_or("课表缺少学期开始日期，请先在课表编辑中填写「学期第一天」")?;
+
+    // 转换学年格式（只需年份，如 "2024"）
+    let year_str = school_year.to_string();
+
+    // 获取考试数据
+    let client = state.get_client()?;
+    let exam_json = client.get_exam_schedule(&year_str, school_term).await?;
+
+    // 转换时间戳为日期字符串
+    let first_day_date = chrono::DateTime::from_timestamp(first_day, 0)
+        .ok_or("无效的学期开始日期")?;
+    let semester_start = first_day_date.format("%Y-%m-%d").to_string();
+
+    // 解析考试数据
+    use crate::parser::parse_exam_json;
+    let exams = parse_exam_json(&exam_json, &semester_start)?;
+
+    if exams.is_empty() {
+        return Err("未查询到考试安排".to_string());
+    }
+
+    // 合并到现有课表（移除旧考试）
+    let regular_courses: Vec<Course> = schedule.courses.into_iter()
+        .filter(|c| c.course_type != crate::models::CourseType::Exam)
+        .collect();
+
+    let mut merged_courses = regular_courses;
+    merged_courses.extend(exams.clone());
+
+    // 保存更新后的课表
+    let now = Utc::now().timestamp();
+    let updated_schedule = CachedSchedule {
+        id: schedule_id.clone(),
+        name: schedule.name,
+        courses: merged_courses.clone(),
+        timestamp: now,
+        expire_time: schedule.expire_time,
+        first_day: schedule.first_day,
+        max_periods: schedule.max_periods,
+        weeks_count: schedule.weeks_count,
+        time_table_id: schedule.time_table_id,
+        sort_index: schedule.sort_index,
+        school_year: schedule.school_year,
+        school_term: schedule.school_term,
+    };
+
+    storage.save_schedule(&updated_schedule)?;
+
+    println!("成功导入 {} 门考试到课表", exams.len());
+    Ok(exams)
+}
+
 /// 计算两个课表之间的差异
 fn calculate_schedule_diff(
     old_courses: &[Course],
@@ -278,8 +349,12 @@ fn calculate_schedule_diff(
     }
 
     // 查找删除的课程
-    for (key, _) in &old_map {
+    for (key, course) in &old_map {
         if !new_map.contains_key(key) {
+            // 如果是考试，不计入删除（因为教务系统数据本就不包含考试）
+            if course.course_type == crate::models::CourseType::Exam {
+                continue;
+            }
             removed_count += 1;
         }
     }
@@ -348,10 +423,10 @@ async fn import_schedule_from_saved_login(
 
     storage.save_schedule(&cached)?;
 
-    // 更新当前选中的课表 ID
-    let mut config = storage.load_config().unwrap_or_default();
-    config.current_schedule_id = Some(schedule_id.clone());
-    storage.save_config(&config)?;
+    // 更新当前选中的课表 ID - 移除自动切换，由前端控制
+    // let mut config = storage.load_config().unwrap_or_default();
+    // config.current_schedule_id = Some(schedule_id.clone());
+    // storage.save_config(&config)?;
 
     Ok(schedule_id)
 }
@@ -401,9 +476,16 @@ async fn update_schedule_with_diff(
     // 5. 计算差异
     let diff = calculate_schedule_diff(&old_schedule.courses, &new_courses);
 
-    // 6. 保存新课表数据
+    // 6. 合并课程：保留原有的考试信息，更新常规课程
+    let mut merged_courses: Vec<crate::models::Course> = old_schedule.courses.iter()
+        .filter(|c| c.course_type == crate::models::CourseType::Exam)
+        .cloned()
+        .collect();
+    merged_courses.extend(new_courses);
+
+    // 7. 保存新课表数据
     let mut updated_schedule = old_schedule.clone();
-    updated_schedule.courses = new_courses;
+    updated_schedule.courses = merged_courses;
     updated_schedule.timestamp = chrono::Utc::now().timestamp();
     storage.save_schedule(&updated_schedule)?;
 
@@ -608,16 +690,16 @@ fn save_schedule_cache(
 
     storage.save_schedule(&cached)?;
 
-    // 更新当前选中的课表 ID
-    let mut config = storage.load_config().unwrap_or_default();
-    config.current_schedule_id = Some(id.clone());
+    // 更新当前选中的课表 ID - 移除自动切换
+    // let mut config = storage.load_config().unwrap_or_default();
+    // config.current_schedule_id = Some(id.clone());
 
-    // 如果提供了 first_day，也更新全局配置 (兼容性)
-    if let Some(fd) = first_day {
-        config.first_day = Some(fd);
-    }
+    // // 如果提供了 first_day，也更新全局配置 (兼容性)
+    // if let Some(fd) = first_day {
+    //     config.first_day = Some(fd);
+    // }
 
-    storage.save_config(&config)?;
+    // storage.save_config(&config)?;
 
     Ok(id)
 }
@@ -1051,11 +1133,11 @@ async fn import_from_browser(app: tauri::AppHandle, html: String, name: Option<S
     storage.save_schedule(&cached)?;
     println!("课表已保存到文件");
 
-    // 更新当前选中的课表 ID
-    let mut config = storage.load_config().unwrap_or_default();
-    config.current_schedule_id = Some(schedule_id.clone());
-    storage.save_config(&config)?;
-    println!("全局配置已更新");
+    // 更新当前选中的课表 ID - 移除自动切换
+    // let mut config = storage.load_config().unwrap_or_default();
+    // config.current_schedule_id = Some(schedule_id.clone());
+    // storage.save_config(&config)?;
+    // println!("全局配置已更新");
 
     // 通过事件通知前端，导入成功并返回课表ID和课程数量
     app.emit("schedule-imported", serde_json::json!({
@@ -1093,6 +1175,7 @@ pub fn run() {
             import_schedule_from_saved_login,
             import_schedule_with_auto_relogin,
             update_schedule_with_diff,
+            fetch_and_import_exams,
             // 登录相关
             login_and_get_schedule,
             refresh_schedule,

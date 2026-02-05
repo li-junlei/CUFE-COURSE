@@ -57,6 +57,7 @@
         :card-opacity="cardOpacity"
         :show-teacher="showTeacher"
         :show-location="showLocation"
+        :simplified-location="simplifiedLocation"
         @click="onCardClick"
       />
     </div>
@@ -80,6 +81,7 @@ interface Props {
   cardOpacity?: number;
   showTeacher?: boolean;
   showLocation?: boolean;
+  simplifiedLocation?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -90,6 +92,7 @@ const props = withDefaults(defineProps<Props>(), {
   cardOpacity: 95,
   showTeacher: true,
   showLocation: true,
+  simplifiedLocation: false,
 });
 
 const emit = defineEmits<{

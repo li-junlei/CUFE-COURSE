@@ -2,6 +2,7 @@
 // 请使用 parse_cufe_json() 解析课表数据
 
 use crate::models::Course;
+use chrono::Datelike;
 
 /// 解析 HTML 格式的课表数据（已废弃）
 /// CUFE 教务系统现在只返回 JSON，不再支持 HTML 解析
@@ -123,6 +124,8 @@ pub fn parse_cufe_json(json_text: &str) -> Result<Vec<Course>, String> {
             day_of_week,
             periods,
             location: classroom,
+            course_type: crate::models::CourseType::Regular,
+            exam_info: None,
         });
     }
 
@@ -267,4 +270,178 @@ mod tests {
             assert_eq!(c2.day_of_week, 2); // Tue
         }
     }
+}
+
+/// ============================================================
+/// 考试数据解析
+/// ============================================================
+
+/// 解析 CUFE JSON 格式的考试数据并转换为 Course 列表
+/// 参数：
+/// - exam_json: 考试 JSON 数据
+/// - semester_start_date: 学期开始日期（第一周周一），格式 "2025-09-01"
+pub fn parse_exam_json(exam_json: &serde_json::Value, semester_start_date: &str) -> Result<Vec<Course>, String> {
+    use chrono::NaiveDate;
+    use crate::models::{CourseType, ExamInfo};
+
+    println!("=== 开始解析考试数据 ===");
+
+    // 解析学期开始日期
+    let semester_start = NaiveDate::parse_from_str(semester_start_date, "%Y-%m-%d")
+        .map_err(|e| format!("解析学期开始日期失败: {}", e))?;
+
+    // 提取 items 数组
+    let items = exam_json.get("items")
+        .and_then(|v| v.as_array())
+        .ok_or("JSON 中缺少 items 数组")?;
+
+    if items.is_empty() {
+        println!("未找到考试数据");
+        return Ok(Vec::new());
+    }
+
+    println!("找到 {} 门考试", items.len());
+
+    let mut exams: Vec<Course> = Vec::new();
+
+    for (idx, item) in items.iter().enumerate() {
+        // 提取字段
+        let course_name = item.get("kcmc")
+            .and_then(|v| v.as_str())
+            .unwrap_or("未知课程");
+
+        let exam_time_str = item.get("kssj")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("考试 {} 缺少考试时间字段", idx + 1))?;
+
+        let location = item.get("cdmc")
+            .and_then(|v| v.as_str())
+            .unwrap_or("未知地点");
+
+        let exam_name = item.get("ksmc")
+            .and_then(|v| v.as_str())
+            .unwrap_or("考试");
+
+        // 解析考试时间 "2026-01-06(10:00-11:40)"
+        let (exam_date_str, start_time, end_time) = parse_exam_time(exam_time_str)?;
+
+        // 解析考试日期
+        let exam_date = NaiveDate::parse_from_str(&exam_date_str, "%Y-%m-%d")
+            .map_err(|e| format!("解析考试日期失败: {}", e))?;
+
+        // 计算星期几 (1=周一, 7=周日)
+        let day_of_week = exam_date.weekday().num_days_from_monday() as i32 + 1;
+
+        // 计算周次
+        let days_diff = exam_date.signed_duration_since(semester_start).num_days();
+        let week_number = (days_diff / 7) + 1;
+
+        if week_number < 1 || week_number > 25 {
+            println!("警告：考试 {} 的日期 {} 不在合理的学期范围内（第{}周）", course_name, exam_date_str, week_number);
+        }
+
+        // 映射时间到节次
+        let periods = map_time_to_periods(&start_time, &end_time)?;
+
+        println!("解析考试 {}: {} - {} 第{}周 周{} 第{:?}节",
+            idx + 1, course_name, exam_date_str, week_number, day_of_week, periods);
+
+        exams.push(Course {
+            name: format!("【考试】{}", course_name),
+            teacher: String::new(), // 考试没有教师信息
+            weeks: vec![week_number as i32],
+            week_type: 0,
+            day_of_week,
+            periods,
+            location: location.to_string(),
+            course_type: CourseType::Exam,
+            exam_info: Some(ExamInfo {
+                date: exam_date_str,
+                start_time,
+                end_time,
+                exam_name: exam_name.to_string(),
+            }),
+        });
+    }
+
+    println!("成功解析 {} 门考试", exams.len());
+    Ok(exams)
+}
+
+/// 解析考试时间字符串
+/// 格式: "2026-01-06(10:00-11:40)"
+/// 返回: (日期, 开始时间, 结束时间)
+fn parse_exam_time(time_str: &str) -> Result<(String, String, String), String> {
+    // 查找括号位置
+    let open_paren = time_str.find('(')
+        .ok_or_else(|| format!("考试时间格式错误，缺少括号: {}", time_str))?;
+    let close_paren = time_str.find(')')
+        .ok_or_else(|| format!("考试时间格式错误，缺少右括号: {}", time_str))?;
+
+    // 提取日期部分
+    let date = time_str[..open_paren].to_string();
+
+    // 提取时间部分 "10:00-11:40"
+    let time_range = &time_str[open_paren + 1..close_paren];
+
+    // 分割开始和结束时间
+    let time_parts: Vec<&str> = time_range.split('-').collect();
+    if time_parts.len() != 2 {
+        return Err(format!("考试时间范围格式错误: {}", time_range));
+    }
+
+    Ok((date, time_parts[0].to_string(), time_parts[1].to_string()))
+}
+
+/// 将考试时间映射到节次
+/// 基于 CUFE 默认时间表
+fn map_time_to_periods(start_time: &str, end_time: &str) -> Result<Vec<i32>, String> {
+    // CUFE 默认时间表（参考 models.rs 中的 AppConfig::default）
+    let time_slots = vec![
+        ("08:00", "08:45", vec![1]),
+        ("08:55", "09:40", vec![2]),
+        ("10:00", "10:45", vec![3]),
+        ("10:55", "11:40", vec![4]),
+        ("11:50", "12:35", vec![5]),
+        ("12:45", "13:30", vec![6]),
+        ("14:00", "14:45", vec![7]),
+        ("14:55", "15:40", vec![8]),
+        ("16:00", "16:45", vec![9]),
+        ("16:55", "17:40", vec![10]),
+        ("17:50", "18:35", vec![11]),
+        ("19:20", "20:05", vec![12]),
+        ("20:15", "21:00", vec![13]),
+    ];
+
+    // 找到开始时间对应的节次
+    let start_period = time_slots.iter()
+        .find(|(slot_start, _, _)| start_time <= *slot_start)
+        .or_else(|| time_slots.iter().find(|(slot_start, slot_end, _)| start_time >= *slot_start && start_time <= *slot_end))
+        .map(|(_, _, periods)| periods[0])
+        .unwrap_or(1);
+
+    // 找到结束时间对应的节次
+    let end_period = time_slots.iter()
+        .rev()
+        .find(|(_, slot_end, _)| end_time >= *slot_end)
+        .or_else(|| time_slots.iter().rev().find(|(slot_start, slot_end, _)| end_time >= *slot_start && end_time <= *slot_end))
+        .map(|(_, _, periods)| periods[0])
+        .unwrap_or(13);
+
+    // 如果找不到精确匹配，尝试估算
+    let final_start = if start_period == 1 && start_time > "09:00" {
+        // 如果开始时间在上午但不是第1节，估算节次
+        if start_time >= "10:00" { 3 } else { 1 }
+    } else {
+        start_period
+    };
+
+    let final_end = if end_period == 13 && end_time < "20:00" {
+        // 如果结束时间不在晚上，估算节次
+        if end_time <= "12:00" { 4 } else if end_time <= "16:00" { 8 } else { 10 }
+    } else {
+        end_period
+    };
+
+    Ok(vec![final_start, final_end])
 }

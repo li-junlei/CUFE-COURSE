@@ -1,5 +1,25 @@
 /**
+ * 课程类型
+ */
+export type CourseType = 'regular' | 'exam';
+
+/**
+ * 考试详细信息
+ */
+export interface ExamInfo {
+  /** 考试日期 "2026-01-06" */
+  date: string;
+  /** 开始时间 "10:00" */
+  startTime: string;
+  /** 结束时间 "11:40" */
+  endTime: string;
+  /** 考试名称 "25-26-1期末考试" */
+  examName: string;
+}
+
+/**
  * 课程数据结构
+ * 注意：字段名使用 camelCase，与后端 Rust serde 序列化一致
  */
 export interface Course {
   /** 课程名称 */
@@ -9,13 +29,18 @@ export interface Course {
   /** 周次范围 [开始周, 结束周, 开始周2(可选), 结束周2(可选)] */
   weeks: number[];
   /** 单双周标记 (1=单周, 2=双周, 0=全周) */
-  week_type: number;
+  weekType: number;
   /** 星期 (1-7) */
-  day_of_week: number;
+  dayOfWeek: number;
   /** 节次范围 [开始节, 结束节] */
   periods: number[];
   /** 教室/地点 */
   location: string;
+
+  /** 课程类型（新增，向后兼容） */
+  courseType?: CourseType;
+  /** 考试详细信息（仅考试类型有效） */
+  examInfo?: ExamInfo;
 }
 
 /**
@@ -85,6 +110,8 @@ export interface AppConfig {
   show_teacher?: boolean;
   /** 在卡片中显示上课地点 */
   show_location?: boolean;
+  /** 简化地点显示 (隐藏"沙河校区"等前缀) */
+  simplified_location?: boolean;
 }
 
 /**

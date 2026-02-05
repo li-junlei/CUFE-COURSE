@@ -449,4 +449,68 @@ impl EduSystemClient {
     pub async fn verify_session(&self) -> Result<crate::models::UserInfo, String> {
         self.get_user_info().await
     }
+
+    /// ============================================================
+    /// 考试信息查询方法
+    /// ============================================================
+
+    /// 获取考试安排数据 (CUFE)
+    /// 参数：
+    /// - year: 学年名称，如 "2025-2026"
+    /// - term: 学期 (1, 2, 3)
+    pub async fn get_exam_schedule(&self, year: &str, term: i32) -> Result<serde_json::Value, String> {
+        // 不需要 username 参数，但保持检查以确保已登录
+        if self.username.is_none() {
+            return Err("获取考试需要学号信息，请重新登录".to_string());
+        }
+
+        let url = format!("{}/kwgl/kscx_cxXsksxxIndex.html", self.base_url);
+
+        // 学期码映射 (参考课表查询的映射规则)
+        let term_code = match term {
+            1 => "3",
+            2 => "12",
+            3 => "16",
+            _ => "3",
+        };
+
+        // 查询参数
+        let query_params = [
+            ("doType", "query"),
+            ("gnmkdm", "N358105"),
+        ];
+
+        // POST 数据
+        let form_params = [
+            ("xnm", year),
+            ("xqm", term_code),
+            ("_search", "false"),
+            ("queryModel.showCount", "500"),
+            ("queryModel.currentPage", "1"),
+            ("queryModel.sortName", ""),
+            ("queryModel.sortOrder", "asc"),
+        ];
+
+        println!("正在获取考试安排: xnm={}, xqm={}", year, term_code);
+
+        let response = self.client.post(&url)
+            .query(&query_params)
+            .form(&form_params)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .send()
+            .await
+            .map_err(|e| format!("获取考试请求失败: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("获取考试失败: HTTP {}", response.status()));
+        }
+
+        let json_text = response.text().await.map_err(|e| format!("读取考试数据失败: {}", e))?;
+
+        println!("收到考试JSON响应，长度: {} 字节", json_text.len());
+
+        // 解析 JSON
+        serde_json::from_str(&json_text)
+            .map_err(|e| format!("解析考试JSON失败: {}", e))
+    }
 }

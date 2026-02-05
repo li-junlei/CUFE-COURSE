@@ -1,7 +1,32 @@
 use serde::{Deserialize, Serialize};
 
+/// 课程类型枚举
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CourseType {
+    Regular,  // 常规课程
+    Exam,     // 考试
+}
+
+impl Default for CourseType {
+    fn default() -> Self {
+        CourseType::Regular
+    }
+}
+
+/// 考试详细信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExamInfo {
+    pub date: String,         // 考试日期 "2026-01-06"
+    pub start_time: String,   // 开始时间 "10:00"
+    pub end_time: String,     // 结束时间 "11:40"
+    pub exam_name: String,    // 考试名称 "25-26-1期末考试"
+}
+
 /// 课程数据结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Course {
     /// 课程名称
     pub name: String,
@@ -17,6 +42,14 @@ pub struct Course {
     pub periods: Vec<i32>,
     /// 教室/地点
     pub location: String,
+
+    /// 课程类型（新增，向后兼容）
+    #[serde(default)]
+    pub course_type: CourseType,
+
+    /// 考试详细信息（仅考试类型有效）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exam_info: Option<ExamInfo>,
 }
 
 impl Course {
@@ -70,6 +103,8 @@ impl Course {
             day_of_week,
             periods,
             location,
+            course_type: CourseType::Regular,
+            exam_info: None,
         })
     }
 }

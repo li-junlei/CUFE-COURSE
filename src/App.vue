@@ -181,6 +181,27 @@
             </div>
           </div>
 
+          <!-- 简化地点显示开关 -->
+          <div class="appearance-item switch-item" style="cursor: default;">
+            <div class="item-preview switch-preview">
+               <el-icon :size="32"><Edit /></el-icon>
+            </div>
+            <div class="item-info">
+              <div class="item-title">简化地点显示</div>
+              <div class="item-desc">隐藏"沙河校区"等前缀</div>
+              <div class="item-control">
+                <el-switch
+                  v-model="config.simplified_location"
+                  @change="handleToggleSimplifiedLocation"
+                  :active-icon="Check"
+                  :inactive-icon="Close"
+                  style="--el-switch-on-color: var(--primary-color);"
+                  :disabled="!config.show_location"
+                />
+              </div>
+            </div>
+          </div>
+
           <!-- 课程卡片不透明度 -->
           <div class="appearance-item slider-item" style="cursor: default;">
             <div class="item-preview slider-preview">
@@ -291,6 +312,18 @@
                   :loading="updatingScheduleId === schedule.id"
                 >
                   <el-icon><Refresh /></el-icon>
+                </el-button>
+                <el-button
+                  v-if="canUpdateSchedule(schedule)"
+                  circle
+                  text
+                  type="warning"
+                  @click.stop="handleImportExams(schedule)"
+                  class="action-btn warning"
+                  title="导入考试"
+                  :loading="importingExamsScheduleId === schedule.id"
+                >
+                  <el-icon><DocumentChecked /></el-icon>
                 </el-button>
                 <el-button
                   circle
@@ -430,6 +463,7 @@
         :card-opacity="config.card_opacity"
         :show-teacher="config.show_teacher"
         :show-location="config.show_location"
+        :simplified-location="config.simplified_location"
         @update:week="handleWeekChange"
         @course-click="handleCourseClick"
       />
@@ -518,7 +552,7 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { ElMessage, ElConfigProvider } from 'element-plus';
 import zhCn from 'element-plus/es/locale/lang/zh-cn';
-import { MoreFilled, ArrowDown, Loading, Plus, Picture, Delete, Close, Calendar, Collection, Sunny, Moon, Upload, Timer, User, Location, Edit, Check, Grid, View, Refresh } from '@element-plus/icons-vue';
+import { MoreFilled, ArrowDown, Loading, Plus, Picture, Delete, Close, Calendar, Collection, Sunny, Moon, Upload, Timer, User, Location, Edit, Check, Grid, View, Refresh, DocumentChecked } from '@element-plus/icons-vue';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
@@ -532,7 +566,7 @@ import CourseGrid from './components/CourseGrid.vue';
 import ScheduleEditDialog from './components/ScheduleEditDialog.vue';
 import ImportScheduleDialog from './components/ImportScheduleDialog.vue';
 import UserProfileDialog from './components/UserProfileDialog.vue';
-import type { AppConfig, ScheduleMetadata, EduSystem, UserInfo, ScheduleDiff } from './types';
+import type { AppConfig, ScheduleMetadata, EduSystem, UserInfo, ScheduleDiff, Course } from './types';
 
 // UI 状态
 const showPopup = ref(false);
@@ -851,8 +885,11 @@ async function openBrowser(systemId: string, scheduleName: string) {
                         await saveScheduleCache(courses.value, importScheduleName.value);
                         await loadScheduleList();
 
+                        // 重新加载当前课表数据，防止显示错乱
+                        await loadCachedSchedule();
+
                         // 成功导入
-                        ElMessage.success(`课表导入成功！已导入 ${courses.value.length} 门课程`);
+                        ElMessage.success(`课表导入成功！已导入 ${courses.value.length} 门课程，请在课表管理中切换查看`);
                         htmlSource.value = '';
                     } catch (err) {
                         console.error('导入失败:', err);
@@ -1029,6 +1066,54 @@ async function handleUpdateSchedule(schedule: ScheduleMetadata) {
   }
 }
 
+// 导入考试信息
+const importingExamsScheduleId = ref<string | null>(null);
+
+async function handleImportExams(schedule: ScheduleMetadata) {
+  if (!schedule.school_year || !schedule.school_term) {
+    ElMessage.warning('该课表没有学年学期信息，请先编辑课表填写学年学期');
+    return;
+  }
+
+  if (!schedule.first_day) {
+    ElMessage.warning('该课表没有设置学期开始日期，请先在课表编辑中填写「学期第一天」');
+    return;
+  }
+
+  try {
+    importingExamsScheduleId.value = schedule.id;
+
+    const exams = await invoke<Course[]>('fetch_and_import_exams', {
+      scheduleId: schedule.id
+    });
+
+    ElMessage.success(`成功导入 ${exams.length} 门考试`);
+
+    // 如果导入的课表是当前课表，重新加载课程数据
+    if (currentScheduleId.value === schedule.id) {
+      await loadCachedSchedule(schedule.id);
+    }
+  } catch (e) {
+    console.error('导入考试失败:', e);
+
+    // 根据错误类型显示不同提示
+    const errorMsg = String(e);
+    if (errorMsg.includes('学年信息') || errorMsg.includes('学期信息')) {
+      ElMessage.warning('请先在课表编辑中填写学年学期信息');
+    } else if (errorMsg.includes('学期开始日期') || errorMsg.includes('学期第一天')) {
+      ElMessage.warning('请先在课表编辑中填写「学期第一天」');
+    } else if (errorMsg.includes('未查询到考试')) {
+      ElMessage.info('未查询到考试安排');
+    } else if (errorMsg.includes('请先登录')) {
+      ElMessage.error('登录已失效，请重新登录');
+    } else {
+      ElMessage.error(`导入考试失败: ${errorMsg}`);
+    }
+  } finally {
+    importingExamsScheduleId.value = null;
+  }
+}
+
 // 确认导入课表
 async function handleConfirmImport(data: { 
     method: 'browser' | 'login'; 
@@ -1173,12 +1258,19 @@ async function handleToggleLocation() {
   }
 }
 
+// 处理简化地点显示开关
+async function handleToggleSimplifiedLocation() {
+  try {
+    await invoke('save_app_config', { config: config.value });
+  } catch (e) {
+    ElMessage.error(`保存设置失败: ${e}`);
+  }
+}
+
 async function handleImportSuccess(scheduleId: string) {
-  // 重新加载课表列表
+  // 1. 仅重新加载列表，不自动切换
   await loadScheduleList();
-  // 切换到新导入的课表
-  await handleSwitchSchedule(scheduleId);
-  ElMessage.success('课表导入成功');
+  ElMessage.success('课表导入成功，请在课表管理中切换查看');
 }
 
 // 打开个人中心
@@ -1240,6 +1332,7 @@ async function loadConfig() {
       show_grid_lines: appConfig.show_grid_lines ?? false,
       show_teacher: appConfig.show_teacher ?? true,
       show_location: appConfig.show_location ?? true,
+      simplified_location: appConfig.simplified_location ?? false,
     };
 
     // 加载背景图

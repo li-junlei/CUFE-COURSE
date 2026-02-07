@@ -1267,7 +1267,7 @@ async function handleToggleSimplifiedLocation() {
   }
 }
 
-async function handleImportSuccess(scheduleId: string) {
+async function handleImportSuccess(_scheduleId: string) {
   // 1. 仅重新加载列表，不自动切换
   await loadScheduleList();
   ElMessage.success('课表导入成功，请在课表管理中切换查看');

@@ -4,7 +4,7 @@
 
 基于 [Tauri 2.0](https://tauri.app/) + [Vue 3](https://vuejs.org/) + [TypeScript](https://www.typescriptlang.org/) 构建
 
-[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/lijunlei/course-schedule-desktop)
+[![Version](https://img.shields.io/badge/version-2.3.0-blue.svg)](https://github.com/lijunlei/course-schedule-desktop)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-FFC131.svg)](https://tauri.app/)
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D.svg)](https://vuejs.org/)
@@ -15,6 +15,7 @@
 
 ### 核心功能
 - **一键课表导入** - 直接从中央财经大学教务系统导入课程数据
+- **课表导出/导入** - 支持将课表导出为 JSON 文件进行备份或分享，随时恢复
 - **考试日程同步** - 支持一键获取并导入考试安排，自动合并到当前课表
 - **持久化登录** - 安全保存登录凭证，重启应用自动恢复登录状态
 - **多课表管理** - 创建、切换、重命名、删除、排序多个课表
@@ -41,6 +42,15 @@
 ---
 
 ## 版本历史
+
+### v2.3.0 (2026-02-11)
+- ✨ **新增课表导出/导入功能**
+  - 支持将完整课表数据（含元数据与课程）导出为 JSON 文件
+  - 支持从本地 JSON 文件导入课表，自动处理 ID 冲突与排序
+  - 方便数据备份与同学间分享课表
+- 🎨 **优化课表管理界面**
+  - 新增导出按钮，优化操作栏布局
+  - 改进导入入口，分离"在线导入"与"文件导入"
 
 ### v2.2.0 (2026-02-06)
 - ✨ **新增考试日程导入功能**

@@ -295,6 +295,15 @@
                 <el-button
                   circle
                   text
+                  @click.stop="handleExportSchedule(schedule)"
+                  class="action-btn"
+                  title="导出课表文件"
+                >
+                  <el-icon><Download /></el-icon>
+                </el-button>
+                <el-button
+                  circle
+                  text
                   @click.stop="handleEditSchedule(schedule)"
                   class="action-btn"
                   title="编辑设置"
@@ -346,9 +355,12 @@
         </div>
       </div>
       
-      <div class="dialog-footer">
-          <el-button type="primary" class="modern-button primary full-width" @click="handleNewSchedule">
-            <el-icon style="margin-right: 6px;"><Plus /></el-icon> 新建 / 导入课表
+      <div class="dialog-footer" style="display: flex; gap: 12px;">
+          <el-button @click="handleImportScheduleFromFile" class="modern-button" style="flex: 1;">
+            <el-icon style="margin-right: 6px;"><FolderOpened /></el-icon> 从文件导入
+          </el-button>
+          <el-button type="primary" class="modern-button primary" style="flex: 1.5;" @click="handleNewSchedule">
+            <el-icon style="margin-right: 6px;"><Plus /></el-icon> 新建 / 在线导入
           </el-button>
       </div>
     </el-dialog>
@@ -552,9 +564,9 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { ElMessage, ElConfigProvider } from 'element-plus';
 import zhCn from 'element-plus/es/locale/lang/zh-cn';
-import { MoreFilled, ArrowDown, Loading, Plus, Picture, Delete, Close, Calendar, Collection, Sunny, Moon, Upload, Timer, User, Location, Edit, Check, Grid, View, Refresh, DocumentChecked } from '@element-plus/icons-vue';
+import { MoreFilled, ArrowDown, Loading, Plus, Picture, Delete, Close, Calendar, Collection, Sunny, Moon, Upload, Timer, User, Location, Edit, Check, Grid, View, Refresh, DocumentChecked, Download, FolderOpened } from '@element-plus/icons-vue';
 import { invoke } from '@tauri-apps/api/core';
-import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
 import VueDraggable from 'vuedraggable';
 import { useCourse, useBrowserImport } from './composables/useCourse';
@@ -917,6 +929,54 @@ async function handleScheduleManage() {
   showPopup.value = false;
   showScheduleManageDialog.value = true;
   await loadScheduleList();
+}
+
+// 导出课表
+async function handleExportSchedule(schedule: ScheduleMetadata) {
+  try {
+    const filePath = await saveDialog({
+      filters: [{
+        name: 'JSON Schedule',
+        extensions: ['json']
+      }],
+      defaultPath: `${schedule.name}.json`
+    });
+
+    if (!filePath) return;
+
+    await invoke('export_schedule', {
+      scheduleId: schedule.id,
+      filePath
+    });
+
+    ElMessage.success('课表导出成功');
+  } catch (e) {
+    ElMessage.error(`导出失败: ${e}`);
+  }
+}
+
+// 从文件导入课表
+async function handleImportScheduleFromFile() {
+  try {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{
+        name: 'JSON Schedule',
+        extensions: ['json']
+      }]
+    });
+
+    if (!selected) return;
+
+    const filePath = selected as string;
+
+    await invoke('import_schedule', { filePath });
+
+    ElMessage.success('课表导入成功');
+    await loadScheduleList();
+  } catch (e) {
+    ElMessage.error(`导入失败: ${e}`);
+  }
 }
 
 // 加载课表列表

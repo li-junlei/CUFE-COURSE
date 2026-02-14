@@ -9,7 +9,7 @@ use storage::StorageManager;
 use chrono::{Utc, Duration, Datelike};
 use std::fs;
 use std::collections::HashSet;
-use tauri::{Manager, Emitter};
+use std::path::Path;
 use std::sync::Arc;
 
 // ============== Tauri Commands ==============
@@ -837,9 +837,16 @@ fn get_current_week(first_day: Option<i64>) -> i32 {
 /// 计算指定周次和星期的日期
 /// 返回格式: "M/D" (如 "1/15")
 #[tauri::command]
-fn calculate_date(first_day: i64, target_week: i32, target_day: i32) -> String {
+fn calculate_date(first_day: i64, target_week: i32, target_day: i32) -> Result<String, String> {
+    if target_week < 1 {
+        return Err("目标周次必须大于 0".to_string());
+    }
+    if !(1..=7).contains(&target_day) {
+        return Err("目标星期必须在 1 到 7 之间".to_string());
+    }
+
     let first_date = chrono::DateTime::<Utc>::from_timestamp(first_day, 0)
-        .unwrap()
+        .ok_or("无效的学期开始时间戳")?
         .date_naive();
 
     // 计算目标日期
@@ -847,7 +854,7 @@ fn calculate_date(first_day: i64, target_week: i32, target_day: i32) -> String {
         + Duration::weeks((target_week - 1) as i64)
         + Duration::days((target_day - 1) as i64);
 
-    format!("{}/{}", target_date.month(), target_date.day())
+    Ok(format!("{}/{}", target_date.month(), target_date.day()))
 }
 
 /// 保存背景图
@@ -865,10 +872,11 @@ async fn save_background_image(source_path: String) -> Result<String, String> {
 
     // 保存到配置
     let mut config = storage.load_config().unwrap_or_default();
-    config.background_image = Some(file_name.clone());
+    let stored_path = dest_path.to_string_lossy().to_string();
+    config.background_image = Some(stored_path.clone());
     storage.save_config(&config)?;
 
-    Ok(file_name)
+    Ok(stored_path)
 }
 
 /// 删除背景图
@@ -877,8 +885,16 @@ fn delete_background_image() -> Result<(), String> {
     let storage = StorageManager::new()?;
     let config = storage.load_config()?;
 
-    if let Some(filename) = config.background_image {
-        storage.delete_background(&filename)?;
+    if let Some(path_or_name) = config.background_image {
+        let candidate = Path::new(&path_or_name);
+        if candidate.is_absolute() {
+            if candidate.exists() {
+                fs::remove_file(candidate)
+                    .map_err(|e| format!("删除背景文件失败: {}", e))?;
+            }
+        } else {
+            storage.delete_background(&path_or_name)?;
+        }
     }
 
     // 更新配置
@@ -1126,91 +1142,9 @@ fn clear_all_data() -> Result<(), String> {
 
 // ============== Main Entry Point ==============
 
-mod parser; 
+mod parser;
 
-// ... existing code ...
-
-/// 解析 HTML 课表
-#[tauri::command]
-fn parse_html_schedule(html: String, parser_type: Option<String>) -> Result<Vec<Course>, String> {
-    let parser = parser_type.as_deref().unwrap_or("cufe_default");
-    parser::parse_html_with_parser(&html, parser)
-}
-
-/// 从浏览器导入课表
-#[tauri::command]
-async fn import_from_browser(app: tauri::AppHandle, html: String, name: Option<String>, parser_type: Option<String>) -> Result<String, String> {
-    println!("=== 浏览器导入被调用 ===");
-    println!("HTML 长度: {} 字符", html.len());
-    println!("名称参数: {:?}", name);
-    println!("解析器类型: {:?}", parser_type);
-
-    // 解析 HTML
-    let parser = parser_type.as_deref().unwrap_or("cufe_default");
-    let courses = parser::parse_html_with_parser(&html, parser)?;
-    println!("解析到 {} 门课程", courses.len());
-
-    // 生成课表ID
-    let schedule_id = StorageManager::generate_schedule_id();
-
-    // 使用提供的名称或默认名称
-    let schedule_name = name.unwrap_or_else(|| {
-        format!("从浏览器导入 {}", chrono::Utc::now().format("%Y-%m-%d"))
-    });
-
-    println!("课表名称: {}", schedule_name);
-
-    // 保存课表
-    let storage = StorageManager::new()?;
-    let now = Utc::now().timestamp();
-    let expire_time = now + (30 * 24 * 60 * 60); // 30 天后过期
-
-    // 计算 sort_index (放在最后)
-    let current_list = storage.list_schedules()?;
-    let max_index = current_list.iter().filter_map(|s| s.sort_index).max().unwrap_or(-1);
-    let sort_index = max_index + 1;
-
-    let cached = CachedSchedule {
-        id: schedule_id.clone(),
-        name: schedule_name,
-        courses,
-        timestamp: now,
-        expire_time,
-        first_day: None,
-        max_periods: None,
-        weeks_count: None,
-        time_table_id: None,
-        sort_index: Some(sort_index),
-        school_year: None,
-        school_term: None,
-    };
-
-    storage.save_schedule(&cached)?;
-    println!("课表已保存到文件");
-
-    // 更新当前选中的课表 ID - 移除自动切换
-    // let mut config = storage.load_config().unwrap_or_default();
-    // config.current_schedule_id = Some(schedule_id.clone());
-    // storage.save_config(&config)?;
-    // println!("全局配置已更新");
-
-    // 通过事件通知前端，导入成功并返回课表ID和课程数量
-    app.emit("schedule-imported", serde_json::json!({
-        "schedule_id": schedule_id,
-        "course_count": cached.courses.len(),
-        "schedule_name": cached.name
-    }))
-        .map_err(|e| format!("发送事件失败: {}", e))?;
-
-    println!("=== 浏览器导入完成 ===");
-    Ok(schedule_id)
-}
-
-// ============== Main Entry Point ==============
-
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // CUFE 教务系统 URL
     let base_url = "https://xuanke.cufe.edu.cn/jwglxt".to_string();
 
     tauri::Builder::default()
@@ -1219,7 +1153,6 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(Arc::new(EduSystemState::new(base_url)))
         .invoke_handler(tauri::generate_handler![
-            // 用户相关
             login_and_get_user_info,
             login_and_save_credentials,
             restore_login_session,
@@ -1231,12 +1164,10 @@ pub fn run() {
             import_schedule_with_auto_relogin,
             update_schedule_with_diff,
             fetch_and_import_exams,
-            // 登录相关
             login_and_get_schedule,
             refresh_schedule,
             load_cached_schedule,
             save_schedule_cache,
-            // 课表管理
             list_schedules,
             delete_schedule,
             switch_schedule,
@@ -1247,216 +1178,16 @@ pub fn run() {
             delete_time_table,
             list_time_tables,
             apply_settings_to_all,
-            // 数据相关
             get_current_week,
             calculate_date,
-            parse_html_schedule,
-            import_from_browser,
-            // 配置相关
             save_background_image,
             delete_background_image,
             get_app_config,
             save_app_config,
             clear_all_data,
-            open_login_window,
-            get_window_state,
-            // 导出导入
             export_schedule,
             import_schedule,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-/// 检查窗口是否存在
-#[tauri::command]
-fn get_window_state(app: tauri::AppHandle, window_label: String) -> Result<String, String> {
-    if let Some(_window) = app.get_webview_window(&window_label) {
-        Ok("exists".to_string())
-    } else {
-        Err("Window not found".to_string())
-    }
-}
-
-/// 打开登录窗口
-#[tauri::command]
-async fn open_login_window(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    use tauri::{WebviewUrl, WebviewWindowBuilder};
-
-    let win_label = "login_window";
-    
-    // 如果窗口已存在，聚焦
-    if let Some(win) = app.get_webview_window(win_label) {
-        win.set_focus().map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
-    let script = r#"
-        (function() {
-            // Override window.open to force same-window navigation
-            // Many edu systems use window.open for sub-modules
-            window.open = function(url) {
-                if (url) {
-                    // Handle relative URLs
-                    window.location.href = url;
-                }
-                return window;
-            };
-
-            // Fix links to open in same window (Baidu defaults to _blank)
-            function fixLinks() {
-                try {
-                    const links = document.querySelectorAll('a[target="_blank"]');
-                    links.forEach(link => {
-                        try { link.target = '_self'; } catch(e) {}
-                    });
-                     // Also fix common frame layouts if accessible
-                    try {
-                        const frames = document.querySelectorAll('iframe');
-                        frames.forEach(frame => {
-                            try {
-                                const fDoc = frame.contentDocument;
-                                if (fDoc) {
-                                     const fLinks = fDoc.querySelectorAll('a[target="_blank"]');
-                                     fLinks.forEach(l => l.target = '_self');
-                                }
-                            } catch(e) {}
-                        });
-                    } catch(e) {}
-                } catch(e) {}
-            }
-
-            // Run frequently to catch dynamic content
-            setInterval(fixLinks, 1000);
-            window.addEventListener('DOMContentLoaded', fixLinks);
-            window.addEventListener('load', fixLinks);
-            document.addEventListener('click', function(e) {
-                // aggressively fix target if clicking an anchor
-                let target = e.target;
-                while (target && target.tagName !== 'A') {
-                    target = target.parentElement;
-                }
-                if (target && target.tagName === 'A') {
-                    target.target = '_self';
-                }
-            }, true);
-
-            // Function to add the button
-            function addImportBtn() {
-                if (document.getElementById('tauri-import-btn')) return;
-
-                const btn = document.createElement('button');
-                btn.id = 'tauri-import-btn';
-                btn.innerHTML = '📥 导入当前课表';
-                btn.style.cssText = `
-                    position: fixed;
-                    bottom: 30px;
-                    right: 30px;
-                    z-index: 2147483647;
-                    padding: 12px 24px;
-                    background-color: #409EFF;
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-                    font-size: 16px;
-                    font-weight: bold;
-                    cursor: pointer;
-                    transition: all 0.3s;
-                `;
-
-                btn.onmouseover = () => btn.style.transform = 'scale(1.05)';
-                btn.onmouseout = () => btn.style.transform = 'scale(1)';
-
-                btn.onclick = async function() {
-                    try {
-                        const html = document.documentElement.outerHTML;
-
-                        btn.innerHTML = '⏳ 正在复制...';
-                        btn.style.backgroundColor = '#E6A23C';
-
-                        // 尝试使用 Clipboard API
-                        if (navigator.clipboard && navigator.clipboard.writeText) {
-                            await navigator.clipboard.writeText(html);
-                            console.log('HTML 已复制到剪贴板');
-                            btn.innerHTML = '✅ 已复制！请关闭此窗口';
-                            btn.style.backgroundColor = '#67C23A';
-
-                            // 禁用按钮，防止重复点击
-                            btn.disabled = true;
-                            btn.style.cursor = 'default';
-                            btn.onclick = null;
-                        } else {
-                            // 降级方案：使用传统方法
-                            const textArea = document.createElement('textarea');
-                            textArea.value = html;
-                            textArea.style.position = 'fixed';
-                            textArea.style.left = '-999999px';
-                            document.body.appendChild(textArea);
-                            textArea.select();
-
-                            try {
-                                document.execCommand('copy');
-                                console.log('HTML 已复制到剪贴板（传统方法）');
-                                btn.innerHTML = '✅ 已复制！请关闭此窗口';
-                                btn.style.backgroundColor = '#67C23A';
-                                document.body.removeChild(textArea);
-
-                                // 禁用按钮，防止重复点击
-                                btn.disabled = true;
-                                btn.style.cursor = 'default';
-                                btn.onclick = null;
-                            } catch (err) {
-                                console.error('复制失败:', err);
-                                btn.innerHTML = '❌ 复制失败';
-                                btn.style.backgroundColor = '#F56C6C';
-                                document.body.removeChild(textArea);
-
-                                setTimeout(() => {
-                                    btn.innerHTML = '📥 导入当前课表';
-                                    btn.style.backgroundColor = '#409EFF';
-                                }, 3000);
-                            }
-                        }
-                    } catch (err) {
-                        console.error('导入失败:', err);
-                        btn.innerHTML = '❌ 复制失败';
-                        btn.style.backgroundColor = '#F56C6C';
-
-                        setTimeout(() => {
-                            btn.innerHTML = '📥 导入当前课表';
-                            btn.style.backgroundColor = '#409EFF';
-                        }, 3000);
-                    }
-                };
-
-                document.body.appendChild(btn);
-            }
-
-            // Observe DOM changes to ensure button persists
-            const observer = new MutationObserver((mutations) => {
-                if (!document.body) return;
-                addImportBtn();
-            });
-
-            if (document.body) {
-                addImportBtn();
-                observer.observe(document.body, { childList: true, subtree: true });
-            } else {
-                window.addEventListener('DOMContentLoaded', () => {
-                    addImportBtn();
-                    observer.observe(document.body, { childList: true, subtree: true });
-                });
-            }
-        })();
-    "#;
-
-    WebviewWindowBuilder::new(&app, win_label, WebviewUrl::External(url::Url::parse(&url).map_err(|e| e.to_string())?))
-        .title("教务系统 - 登录并导入")
-        .inner_size(1024.0, 768.0)
-        .initialization_script(script)
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
 }

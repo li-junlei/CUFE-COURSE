@@ -145,14 +145,11 @@ impl EduSystemClient {
         }
 
         // 打印初始请求的响应头（可能包含 Cookie）
-        println!("=== 初始 GET 请求响应头 ===");
         let mut cookies_str = String::new();
         for (key, value) in response.headers() {
-            println!("{}: {:?}", key, value);
             // 提取 Cookie（GET 请求时就会设置）
             if key.as_str().eq_ignore_ascii_case("set-cookie") {
                 if let Ok(v) = value.to_str() {
-                    println!("发现 Cookie: {}", v);
                     if !cookies_str.is_empty() {
                         cookies_str.push_str("; ");
                     }
@@ -162,12 +159,10 @@ impl EduSystemClient {
                 }
             }
         }
-        println!("========================");
 
         // 保存从 GET 请求获取的 Cookie
         if !cookies_str.is_empty() {
             self.cookie = Some(cookies_str.clone());
-            println!("从 GET 请求提取的 Cookie: {}", cookies_str);
         }
 
         let html_content = response.text().await.map_err(|e| format!("读取登录页面失败: {}", e))?;
@@ -182,7 +177,6 @@ impl EduSystemClient {
                 .to_string()
         };
 
-        println!("获取到 CSRF Token: {}", csrftoken);
 
         // 2. 构造登录参数
         // 参考 test_cufe.py: mmsfjm='0' 强制明文传输
@@ -207,11 +201,6 @@ impl EduSystemClient {
         }
 
         // 打印登录响应头（调试用）
-        println!("=== 登录 POST 请求响应头 ===");
-        for (key, value) in response.headers() {
-            println!("{}: {:?}", key, value);
-        }
-        println!("===========================");
 
         let response_text = response.text().await.map_err(|e| format!("读取登录响应失败: {}", e))?;
 
@@ -267,7 +256,6 @@ impl EduSystemClient {
             ("kzlx", "ck".to_string()),
         ];
 
-        println!("正在获取课表: su={}, xnm={}, xqm={}", username, year, term_code);
 
         // 构建请求 - 如果有手动设置的cookie，需要添加到请求头
         let mut request = self.client.post(&url)
@@ -277,7 +265,6 @@ impl EduSystemClient {
 
         // 如果有手动设置的Cookie（从文件恢复的），手动添加到请求头
         if let Some(ref cookie) = self.cookie {
-            println!("手动添加Cookie到课表请求: {}", cookie);
             request = request.header("Cookie", cookie);
         }
 
@@ -292,7 +279,6 @@ impl EduSystemClient {
 
         let json_text = response.text().await.map_err(|e| format!("读取课表数据失败: {}", e))?;
 
-        println!("收到JSON响应，长度: {} 字节", json_text.len());
 
         // 使用新的 JSON parser 解析课表
         use crate::parser::parse_cufe_json;
@@ -309,7 +295,6 @@ impl EduSystemClient {
             ("layout", "default"),
         ];
 
-        println!("正在获取用户信息...");
 
         // reqwest 的 cookie_store 会自动携带之前登录时保存的 cookies
         let response = self.client.get(&url)
@@ -332,10 +317,8 @@ impl EduSystemClient {
             match self.fetch_photo_base64(&user_info.student_number).await {
                 Ok(base64_data) => {
                     user_info.photo_url = Some(base64_data);
-                    println!("照片获取成功");
                 },
-                Err(e) => {
-                    println!("获取照片失败: {}", e);
+                Err(_e) => {
                 }
             }
         }
@@ -368,7 +351,6 @@ impl EduSystemClient {
         let major = extract_text(&document, "#col_zyfx_id > p");
         let gender = extract_text(&document, "#col_xbm > p");
 
-        println!("解析用户信息: 学号={}, 姓名={}, 学院={}", student_number, name, department);
 
         // 如果核心信息都为空，可能是登录失效
         if name.is_empty() && student_number.is_empty() {
@@ -394,7 +376,6 @@ impl EduSystemClient {
         // CUFE 照片 API URL
         let url = format!("{}/xtgl/photo_cxXszp4.html?xh_id={}&zplx=rxhzp", self.base_url, student_number);
 
-        println!("正在获取照片: {}", url);
 
         // reqwest 的 cookie_store 会自动携带之前登录时保存的 cookies
         let response = self.client.get(&url)
@@ -435,7 +416,6 @@ impl EduSystemClient {
         
         let data_uri = format!("data:{};base64,{}", mime_type, base64_data);
 
-        println!("照片获取成功，大小: {} bytes", bytes.len());
 
         Ok(data_uri)
     }
@@ -491,7 +471,6 @@ impl EduSystemClient {
             ("queryModel.sortOrder", "asc"),
         ];
 
-        println!("正在获取考试安排: xnm={}, xqm={}", year, term_code);
 
         let response = self.client.post(&url)
             .query(&query_params)
@@ -507,7 +486,6 @@ impl EduSystemClient {
 
         let json_text = response.text().await.map_err(|e| format!("读取考试数据失败: {}", e))?;
 
-        println!("收到考试JSON响应，长度: {} 字节", json_text.len());
 
         // 解析 JSON
         serde_json::from_str(&json_text)

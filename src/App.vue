@@ -372,13 +372,6 @@
         @saved="loadScheduleList"
     />
 
-    <ImportScheduleDialog
-        v-model="showImportDialog"
-        :edu-systems="config.edu_systems || []"
-        :last-selected-id="config.last_edu_system_id"
-        @confirm="handleConfirmImport"
-    />
-
     <!-- 设置课表日期对话框 (Deprecated, replaced by ScheduleEditDialog)
     <el-dialog
       v-model="showScheduleDateDialog"
@@ -566,10 +559,11 @@ import { ElMessage, ElConfigProvider } from 'element-plus';
 import zhCn from 'element-plus/es/locale/lang/zh-cn';
 import { MoreFilled, ArrowDown, Loading, Plus, Picture, Delete, Close, Calendar, Collection, Sunny, Moon, Upload, Timer, User, Location, Edit, Check, Grid, View, Refresh, DocumentChecked, Download, FolderOpened } from '@element-plus/icons-vue';
 import { invoke } from '@tauri-apps/api/core';
+import { localDataDir } from '@tauri-apps/api/path';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
 import VueDraggable from 'vuedraggable';
-import { useCourse, useBrowserImport } from './composables/useCourse';
+import { useCourse } from './composables/useCourse';
 import { calculateDate } from './utils/date';
 import { getShuffledColors } from './utils/color';
 import PopupMenu from './components/PopupMenu.vue';
@@ -578,7 +572,7 @@ import CourseGrid from './components/CourseGrid.vue';
 import ScheduleEditDialog from './components/ScheduleEditDialog.vue';
 import ImportScheduleDialog from './components/ImportScheduleDialog.vue';
 import UserProfileDialog from './components/UserProfileDialog.vue';
-import type { AppConfig, ScheduleMetadata, EduSystem, UserInfo, ScheduleDiff, Course } from './types';
+import type { AppConfig, ScheduleMetadata, UserInfo, ScheduleDiff, Course } from './types';
 
 // UI 状态
 const showPopup = ref(false);
@@ -615,10 +609,6 @@ const currentWeek = ref(1);
 // endWeek is now Computed: currentSemesterWeeks
 
 // 导入相关
-const htmlSource = ref('');
-const importScheduleName = ref('');
-const selectedEduSystem = ref<EduSystem | null>(null); // 选中的教务系统
-const isImportingFromBrowser = ref(false);
 
 // 应用配置
 const config = ref<AppConfig>({});
@@ -627,8 +617,7 @@ const tempConfig = ref<AppConfig>({}); // For editing in settings
 const backgroundImage = ref('');
 
 // 课表数据和颜色
-const { courses, parseHtmlSchedule, loginAndGetSchedule, loadCachedSchedule, saveScheduleCache, listSchedules, deleteSchedule, switchSchedule, reorderSchedules } = useCourse();
-const { setupImportListener } = useBrowserImport();
+const { courses, loadCachedSchedule, listSchedules, deleteSchedule, switchSchedule, reorderSchedules } = useCourse();
 const courseColors = getShuffledColors();
 
 // 课表管理
@@ -744,13 +733,11 @@ function isToday(day: number): boolean {
 
 // 详情抽屉状态
 const showDetailSheet = ref(false);
-const selectedCourse = ref<any | null>(null);
+const selectedCourse = ref<Course | null>(null);
 
-function handleCourseClick(course: any) {
-  console.log('App received course click:', course?.name);
+function handleCourseClick(course: Course) {
   selectedCourse.value = course;
   showDetailSheet.value = true;
-  console.log('Sheet visibility:', showDetailSheet.value);
 }
 
 function getWeeksText(weeks: number[]) {
@@ -787,7 +774,7 @@ function getWeeksText(weeks: number[]) {
   return ranges.join(', ') + ' 周';
 }
 
-function getCourseTimeText(course: any) {
+function getCourseTimeText(course: Course) {
   const startPeriod = course.periods[0];
   const endPeriod = course.periods[course.periods.length - 1];
   
@@ -823,108 +810,6 @@ function handleWeekChange(week: number) {
 }
 
 // 打开内置浏览器
-async function openBrowser(systemId: string, scheduleName: string) {
-    try {
-        // 查找选中的教务系统
-        // 查找选中的教务系统
-        let system = config.value.edu_systems?.find(s => s.id === systemId);
-        
-        // Fallback for CUFE default
-        if (!system && systemId === 'cufe') {
-             system = {
-                 id: 'cufe',
-                 name: '中央财经大学',
-                 url: 'https://xuanke.cufe.edu.cn/jwglxt/',
-                 parser_type: 'cufe_default',
-                 enabled: true
-             };
-        }
-
-        if (!system) {
-            ElMessage.error('未找到所选教务系统配置');
-            return;
-        }
-
-        // 保存课表名称和选中的教务系统
-        importScheduleName.value = scheduleName;
-        selectedEduSystem.value = system;
-
-        // 使用选中的教务系统 URL
-        await invoke('open_login_window', { url: system.url });
-        ElMessage.info('请在打开的窗口中登录教务系统，并在课表页面点击右下角的导入按钮');
-
-        // 监听窗口关闭事件（轮询方式）
-        const checkInterval = setInterval(async () => {
-            try {
-                // 尝试获取 login_window，如果不存在会抛出错误
-                await invoke('get_window_state', { windowLabel: 'login_window' });
-            } catch (e) {
-                // 窗口不存在，说明已关闭
-                clearInterval(checkInterval);
-                console.log('浏览器窗口已关闭，尝试从剪贴板导入...');
-
-                // 从剪贴板读取并导入
-                try {
-                    const text = await navigator.clipboard.readText();
-
-                    // 验证剪贴板内容
-                    if (!text || text.trim().length === 0) {
-                        ElMessage.warning('未检测到剪贴板内容，请确保在课表页面点击了导入按钮');
-                        return;
-                    }
-
-                    if (text.length < 500) {
-                        ElMessage.warning('剪贴板内容太短，可能不是完整的课表页面HTML');
-                        return;
-                    }
-
-                    console.log('从剪贴板读取到 HTML，长度:', text.length);
-
-                    // 使用用户输入的名称导入
-                    loading.value = true;
-                    try {
-                        // 解析 HTML（使用选中的教务系统的 parser_type）
-                        const parserType = selectedEduSystem.value?.parser_type || 'cufe_default';
-                        await parseHtmlSchedule(text, parserType);
-
-                        // 验证是否解析出课程
-                        if (!courses.value || courses.value.length === 0) {
-                            ElMessage.error('未能从页面中解析出课程信息，请确认已打开正确的课表页面');
-                            return;
-                        }
-
-                        // 保存课表
-                        await saveScheduleCache(courses.value, importScheduleName.value);
-                        await loadScheduleList();
-
-                        // 重新加载当前课表数据，防止显示错乱
-                        await loadCachedSchedule();
-
-                        // 成功导入
-                        ElMessage.success(`课表导入成功！已导入 ${courses.value.length} 门课程，请在课表管理中切换查看`);
-                        htmlSource.value = '';
-                    } catch (err) {
-                        console.error('导入失败:', err);
-                        ElMessage.error(`导入失败: ${err}`);
-                    } finally {
-                        loading.value = false;
-                    }
-                } catch (clipErr) {
-                    console.error('读取剪贴板失败:', clipErr);
-                    ElMessage.error('读取剪贴板失败，请确保已授予剪贴板权限');
-                }
-            }
-        }, 1000); // 每秒检查一次
-
-        // 5分钟后停止检查（避免无限轮询）
-        setTimeout(() => clearInterval(checkInterval), 300000);
-    } catch (e) {
-        console.error(e);
-        ElMessage.error(`打开浏览器失败: ${e}`);
-    }
-}
-
-// 处理课表管理
 async function handleScheduleManage() {
   showPopup.value = false;
   showScheduleManageDialog.value = true;
@@ -983,13 +868,11 @@ async function handleImportScheduleFromFile() {
 async function loadScheduleList() {
   try {
     const schedules = await listSchedules();
-    console.log('加载到的课表列表:', schedules);
     scheduleList.value = schedules;
 
     const cfg = await invoke<AppConfig>('get_app_config');
     currentScheduleId.value = cfg.current_schedule_id;
 
-    console.log('当前课表ID:', currentScheduleId.value);
   } catch (e) {
     console.error('加载课表列表失败:', e);
   }
@@ -1006,16 +889,6 @@ async function handleSwitchSchedule(scheduleId: string) {
     ElMessage.success('切换成功');
     await loadConfig();
 
-    // 调试：打印课程数据
-    console.log('=== 课程数据调试 ===');
-    console.log('当前周次:', currentWeek.value);
-    console.log('课程数量:', courses.value.length);
-    console.log('课程数据:', courses.value);
-    if (courses.value.length > 0) {
-      console.log('第一门课程:', courses.value[0]);
-      console.log('第一门课程的周次:', courses.value[0].weeks);
-      console.log('是否包含当前周次:', courses.value[0].weeks.includes(currentWeek.value));
-    }
   } catch (e) {
     ElMessage.error(`切换失败: ${e}`);
   }
@@ -1065,11 +938,8 @@ async function handleNewSchedule() {
 
 // 打开编辑课表
 function handleEditSchedule(schedule: ScheduleMetadata) {
-    console.log('handleEditSchedule called with:', schedule);
     editingScheduleMeta.value = schedule;
     showScheduleEditDialog.value = true;
-    console.log('showScheduleEditDialog set to:', showScheduleEditDialog.value);
-    console.log('editingScheduleMeta set to:', editingScheduleMeta.value);
 }
 
 // 判断课表是否可以更新 (有学年学期信息)
@@ -1175,62 +1045,6 @@ async function handleImportExams(schedule: ScheduleMetadata) {
 }
 
 // 确认导入课表
-async function handleConfirmImport(data: { 
-    method: 'browser' | 'login'; 
-    systemId: string; 
-    scheduleName: string; 
-    username?: string; 
-    password?: string; 
-}) {
-    // 保存用户选择的教务系统 ID
-    config.value.last_edu_system_id = data.systemId;
-    await invoke('save_app_config', { config: config.value });
-
-    if (data.method === 'login') {
-        if (!data.username || !data.password) return;
-        
-        // 查找选中的教务系统 URL
-        // 查找选中的教务系统 URL
-        let system = config.value.edu_systems?.find(s => s.id === data.systemId);
-        
-        // Fallback for CUFE default if config is missing
-        if (!system && data.systemId === 'cufe') {
-             system = {
-                 id: 'cufe',
-                 name: '中央财经大学',
-                 url: 'https://xuanke.cufe.edu.cn/jwglxt/',
-                 parser_type: 'cufe_default',
-                 enabled: true
-             };
-        }
-
-        if (!system) {
-            ElMessage.error('未找到所选教务系统配置');
-            return;
-        }
-
-        loading.value = true;
-        try {
-            await loginAndGetSchedule(data.username, data.password, system.url, data.scheduleName);
-            ElMessage.success('登录并获取课表成功');
-            showImportDialog.value = false;
-            
-            // 刷新列表并加载最新
-            await loadScheduleList();
-        } catch (e) {
-            console.error(e);
-            ElMessage.error(`登录失败: ${e}`);
-        } finally {
-            loading.value = false;
-        }
-    } else {
-        // 打开浏览器
-        await openBrowser(data.systemId, data.scheduleName); // Removed extra close paren
-    }
-}
-
-
-// 处理背景上传
 async function handleUploadBackground() {
   showPopup.value = false;
   
@@ -1257,8 +1071,8 @@ async function handleUploadBackground() {
       backgroundImage.value = `data:${mimeType};base64,${base64}`;
       
       // 保存配置
-      await invoke('save_background_image', { sourcePath: selected });
-      config.value.background_image = selected as string;
+      const savedPath = await invoke<string>('save_background_image', { sourcePath: selected });
+      config.value.background_image = savedPath;
       
       ElMessage.success('背景设置成功');
     }
@@ -1371,13 +1185,9 @@ function restoreLoginState() {
   invoke<UserInfo>('restore_login_session')
     .then((userInfo: UserInfo) => {
       // 登录成功，保存到全局状态
-      console.log('已自动恢复登录状态:', userInfo.name);
       globalUserInfo.value = userInfo;
     })
-    .catch((_e) => {
-      // 没有保存的凭证或自动登录失败，这是正常情况
-      console.log('未保存的凭证或自动登录失败，用户需要手动登录');
-    });
+    .catch(() => {});
 }
 
 // 加载配置
@@ -1398,11 +1208,24 @@ async function loadConfig() {
     // 加载背景图
     if (config.value.background_image) {
       try {
-        const fileData = await readFile(config.value.background_image);
+        let imagePath = config.value.background_image;
+        let fileData: Uint8Array;
+        try {
+          fileData = await readFile(imagePath);
+        } catch {
+          if (!imagePath.includes('/') && !imagePath.includes('\\')) {
+            const fallbackPath = `${await localDataDir()}cufe-course/backgrounds/${imagePath}`;
+            fileData = await readFile(fallbackPath);
+            imagePath = fallbackPath;
+            config.value.background_image = fallbackPath;
+          } else {
+            throw new Error('读取背景文件失败');
+          }
+        }
         const base64 = btoa(
           new Uint8Array(fileData).reduce((data, byte) => data + String.fromCharCode(byte), '')
         );
-        const ext = config.value.background_image.split('.').pop()?.toLowerCase() || 'png';
+        const ext = imagePath.split('.').pop()?.toLowerCase() || 'png';
         const mimeType = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
         backgroundImage.value = `data:${mimeType};base64,${base64}`;
       } catch (e) {
@@ -1423,8 +1246,6 @@ async function initializeApp() {
     await loadConfig();
   } else {
     // 如果没有缓存,显示导入对话框
-    console.log('没有缓存课表，显示导入对话框');
-    isImportingFromBrowser.value = true;
     showImportDialog.value = true;
   }
 
@@ -1448,26 +1269,6 @@ onMounted(() => {
   // 异步恢复登录状态（不阻塞 UI）
   restoreLoginState();
 
-  // 设置浏览器导入监听
-  setupImportListener(async (result) => {
-    // result 包含 { schedule_id, course_count, schedule_name }
-    console.log('导入成功:', result);
-
-    loading.value = false;
-    isImportingFromBrowser.value = false;
-
-    // 显示成功消息
-    ElMessage.success(`导入成功！已导入 ${result.course_count} 门课程：${result.schedule_name}`);
-
-    // 刷新课表列表
-    await loadScheduleList();
-
-    // 重新加载当前课表数据
-    await loadCachedSchedule();
-
-    // 刷新配置
-    await loadConfig();
-  });
 
   // 异步初始化应用数据（不阻塞 UI）
   initializeApp();

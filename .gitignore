@@ -30,8 +30,11 @@ src-tauri/Cargo.lock
 # Application generated files
 config.json
 nul
+course-schedule-desktop@0.1.0
+tauri
 
 # AI documentation files
 CLAUDE.md
 **/CLAUDE.md
 github-token.txt
+.spec-workflow

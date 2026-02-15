@@ -8,15 +8,15 @@
             <el-icon :size="28"><Collection /></el-icon>
             <span>课表管理</span>
           </div>
-          <div class="menu-item" @click="$emit('import-schedule')">
-            <el-icon :size="28"><Plus /></el-icon>
-            <span>导入课表</span>
+          <div class="menu-item" @click="$emit('settings')">
+            <el-icon :size="28"><Setting /></el-icon>
+            <span>设置</span>
           </div>
           <div class="menu-item" @click="$emit('appearance')">
             <el-icon :size="28"><Picture /></el-icon>
             <span>课表外观</span>
           </div>
-          <div class="menu-item" @click="$emit('settings')">
+          <div class="menu-item" @click="$emit('profile')">
             <el-icon :size="28"><User /></el-icon>
             <span>个人</span>
           </div>
@@ -27,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { Collection, Picture, User, Plus } from '@element-plus/icons-vue';
+import { Collection, Picture, User, Setting } from '@element-plus/icons-vue';
 
 defineProps<{
   show: boolean;
@@ -39,6 +39,7 @@ defineEmits<{
   (e: 'import-schedule'): void;
   (e: 'appearance'): void;
   (e: 'settings'): void;
+  (e: 'profile'): void;
 }>();
 </script>
 

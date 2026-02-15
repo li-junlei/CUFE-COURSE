@@ -4,13 +4,6 @@
 use crate::models::Course;
 use chrono::Datelike;
 
-/// 解析 HTML 格式的课表数据（已废弃）
-/// CUFE 教务系统现在只返回 JSON，不再支持 HTML 解析
-/// 此函数保留是为了向后兼容，但会返回错误提示
-pub fn parse_html_with_parser(_html_content: &str, _parser_type: &str) -> Result<Vec<crate::models::Course>, String> {
-    Err("CUFE 教务系统仅支持 JSON 格式解析。请使用「从服务器导入」功能，不要使用「从浏览器导入」".to_string())
-}
-
 /// 解析 CUFE JSON 格式的课表数据
 /// CUFE 教务系统返回的是 JSON 而不是 HTML
 pub fn parse_cufe_json(json_text: &str) -> Result<Vec<Course>, String> {

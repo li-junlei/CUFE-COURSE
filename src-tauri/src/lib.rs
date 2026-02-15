@@ -2,6 +2,7 @@ mod models;
 mod crypto;
 mod client;
 mod storage;
+mod parser;
 
 use client::EduSystemState;
 use models::{AppConfig, CachedSchedule, Course, ScheduleMetadata, UserCredentials, TimeTable, UserInfo};
@@ -11,6 +12,67 @@ use std::fs;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager, WindowEvent,
+};
+
+// ============== System Tray ==============
+
+/// 设置系统托盘
+fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    // 创建托盘菜单项
+    let show_item = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "完全退出", true, None::<&str>)?;
+
+    // 创建托盘菜单
+    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+    // 获取应用图标
+    let icon = app.default_window_icon()
+        .cloned()
+        .expect("Failed to get default window icon");
+
+    // 创建托盘图标
+    let _tray = TrayIconBuilder::new()
+        .icon(icon)
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| {
+            match event.id.as_ref() {
+                "show" => {
+                    // 显示主窗口
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+                "quit" => {
+                    // 完全退出程序
+                    app.exit(0);
+                }
+                _ => {}
+            }
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event {
+                // 左键点击显示窗口
+                let app = tray.app_handle();
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        })
+        .build(app)?;
+
+    Ok(())
+}
 
 // ============== Tauri Commands ==============
 
@@ -1142,8 +1204,6 @@ fn clear_all_data() -> Result<(), String> {
 
 // ============== Main Entry Point ==============
 
-mod parser;
-
 pub fn run() {
     let base_url = "https://xuanke.cufe.edu.cn/jwglxt".to_string();
 
@@ -1151,7 +1211,38 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(Arc::new(EduSystemState::new(base_url)))
+        .setup(|app| {
+            // 初始化系统托盘
+            if let Err(e) = setup_tray(app) {
+                eprintln!("Failed to setup tray: {}", e);
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                // 读取配置获取关闭行为
+                let storage = match StorageManager::new() {
+                    Ok(s) => s,
+                    Err(_) => {
+                        // 配置加载失败，默认最小化到托盘
+                        api.prevent_close();
+                        let _ = window.hide();
+                        return;
+                    }
+                };
+
+                let config = storage.load_config().unwrap_or_default();
+
+                if config.close_action_minimize_to_tray.unwrap_or(true) {
+                    // 默认：最小化到托盘
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                // 否则：允许关闭，程序退出
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             login_and_get_user_info,
             login_and_save_credentials,

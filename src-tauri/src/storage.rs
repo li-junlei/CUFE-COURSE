@@ -49,11 +49,6 @@ impl StorageManager {
         self.data_dir.join("cookie.txt")
     }
 
-    /// 获取学号文件路径
-    pub fn username_path(&self) -> PathBuf {
-        self.data_dir.join("username.txt")
-    }
-
     /// 获取背景图目录
     pub fn background_dir(&self) -> PathBuf {
         let dir = self.data_dir.join("backgrounds");
@@ -208,49 +203,6 @@ impl StorageManager {
     /// 生成新的课表ID
     pub fn generate_schedule_id() -> String {
         Uuid::new_v4().to_string()
-    }
-
-    /// 保存 Cookie
-    pub fn save_cookie(&self, cookie: &str) -> Result<(), String> {
-        let path = self.cookie_path();
-        fs::File::create(&path)
-            .and_then(|mut file| file.write_all(cookie.as_bytes()))
-            .map_err(|e| format!("创建 Cookie 文件失败 (路径: {}): {}",
-                                path.display(), e))
-    }
-
-    /// 加载 Cookie
-    pub fn load_cookie(&self) -> Result<String, String> {
-        let path = self.cookie_path();
-        if !path.exists() {
-            return Err(format!("未找到登录信息文件: {}，请先在个人中心登录",
-                              path.display()));
-        }
-
-        fs::read_to_string(&path)
-            .map_err(|e| format!("读取 Cookie 失败: {}", e))
-    }
-
-    /// 保存学号（用于查询课表）
-    pub fn save_username(&self, username: &str) -> Result<(), String> {
-        let path = self.data_dir.join("username.txt");
-        fs::File::create(&path)
-            .and_then(|mut file| file.write_all(username.as_bytes()))
-            .map_err(|e| format!("创建学号文件失败 (路径: {}): {}",
-                                path.display(), e))
-    }
-
-    /// 加载学号
-    pub fn load_username(&self) -> Result<String, String> {
-        let path = self.data_dir.join("username.txt");
-        if !path.exists() {
-            return Err(format!("未找到学号文件: {}，请先在个人中心登录",
-                              path.display()));
-        }
-
-        fs::read_to_string(&path)
-            .map_err(|e| format!("读取学号失败: {}", e))
-            .map(|s| s.trim().to_string())
     }
 
     /// ============================================================

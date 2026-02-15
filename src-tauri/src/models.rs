@@ -52,63 +52,6 @@ pub struct Course {
     pub exam_info: Option<ExamInfo>,
 }
 
-impl Course {
-    /// 从原始数组解析课程数据
-    /// 原始格式: [课程名, 教师, "1-16", "(单)", "一", "1-2", "地点"]
-    pub fn from_raw_array(data: &[String]) -> Option<Self> {
-        if data.len() < 7 {
-            return None;
-        }
-
-        let name = data[0].clone();
-        let teacher = data[1].clone();
-        let location = data[6].clone();
-
-        // 解析周次 "1-16" 或 "1-8,9-16"
-        let weeks: Vec<i32> = data[2]
-            .split(&[',', '-'][..])
-            .filter_map(|s| s.trim().parse().ok())
-            .collect();
-
-        // 解析单双周
-        let week_type = match data[3].as_str() {
-            "(单)" => 1,
-            "(双)" => 2,
-            _ => 0,
-        };
-
-        // 解析星期
-        let day_of_week = match data[4].as_str() {
-            "一" => 1,
-            "二" => 2,
-            "三" => 3,
-            "四" => 4,
-            "五" => 5,
-            "六" => 6,
-            "七" => 7,
-            _ => 0,
-        };
-
-        // 解析节次 "1-2"
-        let periods: Vec<i32> = data[5]
-            .split('-')
-            .filter_map(|s| s.trim().parse().ok())
-            .collect();
-
-        Some(Course {
-            name,
-            teacher,
-            weeks,
-            week_type,
-            day_of_week,
-            periods,
-            location,
-            course_type: CourseType::Regular,
-            exam_info: None,
-        })
-    }
-}
-
 /// 用户凭证
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserCredentials {
@@ -117,14 +60,6 @@ pub struct UserCredentials {
 }
 
 /// 登录初始化参数
-#[derive(Debug, Clone)]
-pub struct LoginInitParams {
-    pub sessionid: String,
-    pub deskey: String,
-    pub randnumber: String,
-    pub nowtime: String,
-}
-
 /// 登录响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginResponse {
@@ -181,6 +116,7 @@ pub struct AppConfig {
     pub card_opacity: Option<i32>, // 课程卡片不透明度 (0-100)
     pub show_teacher: Option<bool>, // 在卡片中显示教师
     pub show_location: Option<bool>, // 在卡片中显示上课地点
+    pub close_action_minimize_to_tray: Option<bool>, // 关闭主界面时：true=最小化到托盘, false=直接退出
 }
 
 /// 时间段(包含开始和结束时间)
@@ -253,6 +189,7 @@ impl Default for AppConfig {
             card_opacity: Some(95), // 默认 95% 不透明度
             show_teacher: Some(true), // 默认显示教师
             show_location: Some(true), // 默认显示地点
+            close_action_minimize_to_tray: Some(true), // 默认最小化到托盘
         }
     }
 }
@@ -295,14 +232,6 @@ pub struct PersistentCredentials {
     pub saved_at: i64,                 // 保存时间戳
 }
 
-/// 会话验证结果
-#[derive(Debug, Clone)]
-pub enum SessionStatus {
-    Valid,              // 会话有效
-    Expired,            // 会话过期，需重新登录
-    NotAuthenticated,   // 未登录
-}
-
 /// ============================================================
 /// 课表更新相关数据结构
 /// ============================================================
@@ -314,12 +243,4 @@ pub struct ScheduleDiff {
     pub removed_count: usize,      // 删除课程数
     pub modified_count: usize,     // 修改课程数
     pub unchanged_count: usize,    // 未变课程数
-}
-
-/// 课程变更详情
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CourseChange {
-    pub old_course: Course,  // 旧课程数据
-    pub new_course: Course,  // 新课程数据
-    pub changes: Vec<String>, // 变更描述
 }

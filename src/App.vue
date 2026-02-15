@@ -24,7 +24,8 @@
       @schedule-manage="handleScheduleManage"
       @import-schedule="handleNewSchedule"
       @appearance="showAppearanceDialog = true"
-      @settings="openSettings"
+      @settings="showSettingsDialog = true"
+      @profile="showUserProfileDialog = true"
     />
 
     <!-- 加载状态 -->
@@ -58,7 +59,40 @@
       </div>
 
       <div class="dialog-content no-scrollbar">
-        <!-- 课表显示设置已迁移到每个课表的独立设置中 -->
+        <!-- 提醒功能设置 -->
+        <div class="settings-section">
+          <div class="section-title">提醒功能</div>
+          <div class="setting-item">
+            <span>启用上课提醒</span>
+            <el-switch v-model="reminderEnabled" />
+          </div>
+          <div class="setting-hint">
+            情况A：无紧邻前序课程 → 课程开始前15分钟提醒<br>
+            情况B：有紧邻前序课程 → 上一节课结束前3分钟提醒
+          </div>
+          <!-- 开发阶段测试按钮 -->
+          <div class="setting-item test-button" v-if="reminderEnabled">
+            <el-button type="primary" size="small" @click="testNotification">
+              测试通知
+            </el-button>
+            <span class="test-hint">点击模拟触发一次课程提醒</span>
+          </div>
+        </div>
+
+        <!-- 窗口行为设置 -->
+        <div class="settings-section">
+          <div class="section-title">窗口行为</div>
+          <div class="setting-item">
+            <span>关闭主界面时</span>
+          </div>
+          <el-radio-group v-model="closeAction" class="close-action-radio">
+            <el-radio value="minimize">最小化到系统托盘</el-radio>
+            <el-radio value="quit">直接退出程序</el-radio>
+          </el-radio-group>
+          <div class="setting-hint">
+            最小化到托盘后，上课提醒功能将持续在后台运行
+          </div>
+        </div>
       </div>
 
       <div class="dialog-footer">
@@ -579,6 +613,8 @@ const showPopup = ref(false);
 const showWeekSelector = ref(false);
 const showImportDialog = ref(false);
 const showSettingsDialog = ref(false);
+const reminderEnabled = ref(false); // 提醒功能开关
+const closeAction = ref<'minimize' | 'quit'>('minimize'); // 窗口关闭行为
 const showAppearanceDialog = ref(false);
 const showScheduleManageDialog = ref(false);
 const showUserProfileDialog = ref(false); // 用户个人中心对话框
@@ -1148,9 +1184,33 @@ async function handleImportSuccess(_scheduleId: string) {
 }
 
 // 打开个人中心
-function openSettings() {
-  showPopup.value = false;
-  showUserProfileDialog.value = true;
+// 测试通知功能
+async function testNotification() {
+  try {
+    // 导入通知插件（动态导入，确保插件已加载）
+    const { isPermissionGranted, requestPermission, sendNotification } = await import('@tauri-apps/plugin-notification');
+
+    // 检查并请求通知权限
+    let permissionGranted = await isPermissionGranted();
+    if (!permissionGranted) {
+      const permission = await requestPermission();
+      permissionGranted = permission === 'granted';
+    }
+
+    if (permissionGranted) {
+      // 发送测试通知
+      await sendNotification({
+        title: '上课提醒 - 测试',
+        body: '课程: 测试课程\n地点: 沙河校区主教101\n时间: 08:00 - 09:35'
+      });
+      ElMessage.success('测试通知已发送！请检查系统通知。');
+    } else {
+      ElMessage.warning('通知权限未授予，请到系统设置中开启通知权限。');
+    }
+  } catch (error) {
+    console.error('发送通知失败:', error);
+    ElMessage.error('发送通知失败: ' + (error as Error).message);
+  }
 }
 
 // 登录成功处理
@@ -1166,6 +1226,9 @@ function handleLogout() {
 // 保存设置
 async function saveSettings() {
   try {
+    // 更新窗口关闭行为设置
+    tempConfig.value.close_action_minimize_to_tray = closeAction.value === 'minimize';
+
     const newConfig = {
         ...config.value,
         ...tempConfig.value,
@@ -1203,7 +1266,11 @@ async function loadConfig() {
       show_teacher: appConfig.show_teacher ?? true,
       show_location: appConfig.show_location ?? true,
       simplified_location: appConfig.simplified_location ?? false,
+      close_action_minimize_to_tray: appConfig.close_action_minimize_to_tray ?? true,
     };
+
+    // 读取窗口关闭行为设置
+    closeAction.value = config.value.close_action_minimize_to_tray === false ? 'quit' : 'minimize';
 
     // 加载背景图
     if (config.value.background_image) {
@@ -1650,6 +1717,60 @@ html.dark .theme-toggle {
 }
 
 /* 设置表单样式 */
+.settings-section {
+  padding: 16px;
+  background: var(--surface-color-light);
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 16px;
+}
+
+.setting-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+}
+
+.setting-item span {
+  font-size: 14px;
+  color: var(--text-main);
+}
+
+.setting-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 8px;
+  line-height: 1.6;
+}
+
+.close-action-radio {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.test-button {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--surface-color-strong);
+  border-radius: 8px;
+  justify-content: flex-start;
+}
+
+.test-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: 8px;
+}
+
 .setting-group {
   margin-bottom: 24px;
 }
@@ -1660,12 +1781,6 @@ html.dark .theme-toggle {
   color: var(--text-main);
   margin-bottom: 12px;
   display: block;
-}
-
-.setting-hint {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  margin-top: 8px;
 }
 
 .custom-input .el-input__wrapper {

@@ -112,6 +112,12 @@ export interface AppConfig {
   show_location?: boolean;
   /** 简化地点显示 (隐藏"沙河校区"等前缀) */
   simplified_location?: boolean;
+  /** 启用上课提醒 */
+  reminder_enabled?: boolean;
+  /** 已提醒的课程记录 (防止重复提醒) key: "dayOfWeek_periods", value: timestamp */
+  reminded_courses?: Record<string, number>;
+  /** 关闭主界面时：true=最小化到托盘, false=直接退出 */
+  close_action_minimize_to_tray?: boolean;
 }
 
 /**

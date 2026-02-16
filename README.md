@@ -4,7 +4,7 @@
 
 基于 [Tauri 2.0](https://tauri.app/) + [Vue 3](https://vuejs.org/) + [TypeScript](https://www.typescriptlang.org/) 构建
 
-[![Version](https://img.shields.io/badge/version-2.3.0-blue.svg)](https://github.com/lijunlei/course-schedule-desktop)
+[![Version](https://img.shields.io/badge/version-2.5.0-blue.svg)](https://github.com/lijunlei/course-schedule-desktop)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-FFC131.svg)](https://tauri.app/)
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D.svg)](https://vuejs.org/)
@@ -239,7 +239,7 @@
 
 ```
 course-schedule-desktop/
-├── src/                    # 前端源码
+├── src/                    # 前端源码 (Vue 3 + TypeScript)
 │   ├── components/         # Vue 组件
 │   │   ├── CourseGrid.vue       # 课程网格
 │   │   ├── WeekSelector.vue     # 周次选择器
@@ -247,23 +247,44 @@ course-schedule-desktop/
 │   │   ├── ScheduleEditDialog.vue   # 课表编辑对话框
 │   │   ├── ImportScheduleDialog.vue  # 导入课表对话框
 │   │   ├── UserProfileDialog.vue    # 用户中心/登录
-│   │   └── TimeTableManager.vue  # 时间表管理器
-│   ├── composables/        # 组合式函数
-│   │   ├── useCourse.ts         # 课表数据管理
-│   │   └── useTimeTable.ts      # 时间表逻辑
+│   │   ├── TimeTableManager.vue  # 时间表管理器
+│   │   └── PopupMenu.vue         # 弹出菜单
+│   ├── composables/        # 组合式函数 (业务逻辑)
+│   │   ├── useAuth.ts          # 用户认证状态管理
+│   │   ├── useConfig.ts        # 应用配置管理
+│   │   ├── useSchedule.ts      # 课表视图状态管理
+│   │   ├── useImportExport.ts  # 导入导出逻辑
+│   │   ├── useCourse.ts        # 课表数据 CRUD
+│   │   ├── useReminder.ts      # 提醒服务
+│   │   └── useTimeTable.ts     # 时间表 CRUD
 │   ├── utils/              # 工具函数
 │   │   ├── color.ts             # 颜色工具
-│   │   └── date.ts              # 日期工具
+│   │   ├── date.ts              # 日期工具
+│   │   ├── week.ts              # 周次工具
+│   │   └── config.ts            # 配置工具
 │   ├── types.ts            # TypeScript 类型定义
 │   └── App.vue             # 根组件
 ├── src-tauri/             # Rust 后端
 │   ├── src/
-│   │   ├── lib.rs              # Tauri 命令定义与注册
-│   │   ├── models.rs           # 数据模型 (Course, ScheduleMetadata, PersistentCredentials)
-│   │   ├── parser.rs           # CUFE JSON 课表解析器
+│   │   ├── lib.rs              # Tauri 命令注册入口
+│   │   ├── models.rs           # 数据模型
+│   │   ├── parser.rs           # 课表解析器
 │   │   ├── storage.rs          # 本地存储管理
 │   │   ├── client.rs           # HTTP 客户端与会话管理
-│   │   └── crypto.rs           # 加密模块 (DPAPI, DES, MD5)
+│   │   ├── crypto.rs           # 加密模块
+│   │   ├── commands/           # Tauri 命令模块
+│   │   │   ├── auth.rs         # 登录认证命令
+│   │   │   ├── schedule.rs     # 课表 CRUD 命令
+│   │   │   ├── import_export.rs # 导入导出命令
+│   │   │   ├── exam.rs         # 考试命令
+│   │   │   ├── config.rs       # 配置管理命令
+│   │   │   ├── date.rs         # 日期计算命令
+│   │   │   ├── background.rs   # 背景图命令
+│   │   │   └── update.rs      # 更新检查命令
+│   │   ├── services/           # 业务服务层
+│   │   │   └── schedule_service.rs # 课表差异计算
+│   │   └── system/             # 系统功能
+│   │       └── tray.rs         # 系统托盘
 │   ├── Cargo.toml              # Rust 依赖配置
 │   └── tauri.conf.json         # Tauri 配置
 ├── package.json           # 前端依赖配置

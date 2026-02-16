@@ -116,6 +116,10 @@ pub struct AppConfig {
     pub card_opacity: Option<i32>, // 课程卡片不透明度 (0-100)
     pub show_teacher: Option<bool>, // 在卡片中显示教师
     pub show_location: Option<bool>, // 在卡片中显示上课地点
+    pub simplified_location: Option<bool>, // 简化地点显示
+    pub reminder_enabled: Option<bool>, // 启用上课提醒
+    pub auto_check_update: Option<bool>, // 自动检查更新
+    pub skipped_version: Option<String>, // 跳过的版本号
     pub close_action_minimize_to_tray: Option<bool>, // 关闭主界面时：true=最小化到托盘, false=直接退出
 }
 
@@ -189,6 +193,10 @@ impl Default for AppConfig {
             card_opacity: Some(95), // 默认 95% 不透明度
             show_teacher: Some(true), // 默认显示教师
             show_location: Some(true), // 默认显示地点
+            simplified_location: Some(false), // 默认不简化地点
+            reminder_enabled: Some(false), // 默认关闭提醒
+            auto_check_update: Some(true), // 默认开启自动检查更新
+            skipped_version: None, // 默认不跳过任何版本
             close_action_minimize_to_tray: Some(true), // 默认最小化到托盘
         }
     }

@@ -93,6 +93,20 @@
             最小化到托盘后，上课提醒功能将持续在后台运行
           </div>
         </div>
+
+        <!-- 更新设置 -->
+        <div class="settings-section">
+          <div class="section-title">软件更新</div>
+          <div class="setting-item">
+            <span>自动检查更新</span>
+            <el-switch v-model="config.auto_check_update" />
+          </div>
+          <div class="setting-item">
+            <el-button size="small" @click="handleManualCheckUpdate">
+              检查更新
+            </el-button>
+          </div>
+        </div>
       </div>
 
       <div class="dialog-footer">
@@ -576,6 +590,28 @@
       @logout="handleLogout"
     />
 
+    <!-- 更新提示对话框 -->
+    <el-dialog
+      v-model="showUpdateDialog"
+      title="发现新版本"
+      width="420px"
+      :close-on-click-modal="false"
+      class="update-dialog"
+    >
+      <div class="update-content">
+        <div class="version-badge">v{{ pendingUpdate?.version }}</div>
+        <h3>{{ pendingUpdate?.title }}</h3>
+        <div class="release-notes">{{ pendingUpdate?.releaseNotes }}</div>
+      </div>
+      <template #footer>
+        <div class="update-actions">
+          <el-button @click="handleSkipVersion">此版本不再提醒</el-button>
+          <el-button @click="showUpdateDialog = false">暂不更新</el-button>
+          <el-button type="primary" @click="handleGoToDownload">去下载</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
     <!-- 主题切换按钮 -->
     <div class="theme-toggle" @click="toggleTheme" :title="isDark ? '切换亮色模式' : '切换深色模式'">
       <el-icon :size="20">
@@ -595,9 +631,14 @@ import { MoreFilled, ArrowDown, Loading, Plus, Picture, Delete, Close, Calendar,
 import { invoke } from '@tauri-apps/api/core';
 import { localDataDir } from '@tauri-apps/api/path';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { readFile } from '@tauri-apps/plugin-fs';
 import VueDraggable from 'vuedraggable';
 import { useCourse } from './composables/useCourse';
+import { useSchedule } from './composables/useSchedule';
+import { useConfig } from './composables/useConfig';
+import { useAuth } from './composables/useAuth';
+import { useImportExport } from './composables/useImportExport';
 import { calculateDate } from './utils/date';
 import { getShuffledColors } from './utils/color';
 import PopupMenu from './components/PopupMenu.vue';
@@ -606,7 +647,16 @@ import CourseGrid from './components/CourseGrid.vue';
 import ScheduleEditDialog from './components/ScheduleEditDialog.vue';
 import ImportScheduleDialog from './components/ImportScheduleDialog.vue';
 import UserProfileDialog from './components/UserProfileDialog.vue';
-import type { AppConfig, ScheduleMetadata, UserInfo, ScheduleDiff, Course } from './types';
+import type { AppConfig, ScheduleMetadata, UserInfo, ScheduleDiff, Course, UpdateInfo } from './types';
+
+// 从 composables 导入状态和方法
+const { scheduleList, currentScheduleId, currentWeek, activeSchedule, loadScheduleList, deleteSchedule: deleteScheduleFn, switchSchedule: switchScheduleFn, reorderSchedules: reorderSchedulesFn } = useSchedule();
+const { config, backgroundImage, checkForUpdate, skipVersion } = useConfig();
+const { globalUserInfo: globalUserInfoRef, restoreLoginState } = useAuth();
+const { exportSchedule, importScheduleFromFile } = useImportExport();
+
+// 使用导入的全局状态
+const globalUserInfo = globalUserInfoRef;
 
 // UI 状态
 const showPopup = ref(false);
@@ -615,56 +665,25 @@ const showImportDialog = ref(false);
 const showSettingsDialog = ref(false);
 const reminderEnabled = ref(false); // 提醒功能开关
 const closeAction = ref<'minimize' | 'quit'>('minimize'); // 窗口关闭行为
+const showUpdateDialog = ref(false); // 更新提示对话框
+const pendingUpdate = ref<UpdateInfo | null>(null); // 待处理的更新信息
 const showAppearanceDialog = ref(false);
 const showScheduleManageDialog = ref(false);
 const showUserProfileDialog = ref(false); // 用户个人中心对话框
-// const showScheduleDateDialog = ref(false); // Unused - dialog is deprecated
-const loading = ref(false);
-
-// 全局用户信息状态
-const globalUserInfo = ref<UserInfo | null>(null);
 const isSorting = ref(false); // 排序模式状态
 const showScheduleEditDialog = ref(false);
 const editingScheduleMeta = ref<ScheduleMetadata | undefined>(undefined);
+const loading = ref(false); // 加载状态
 
-// 编辑课表日期对话框数据 (Unused - dialog is deprecated)
-// interface EditingSchedule {
-//   id: string;
-//   name: string;
-//   first_day?: number;
-//   first_day_date?: string;
-// }
-// const editingSchedule = ref<EditingSchedule>({
-//   id: '',
-//   name: '',
-//   first_day: undefined,
-//   first_day_date: undefined,
-// });
-
-const currentWeek = ref(1);
-// endWeek is now Computed: currentSemesterWeeks
-
-// 导入相关
-
-// 应用配置
-const config = ref<AppConfig>({});
-const tempConfig = ref<AppConfig>({}); // For editing in settings
-// const tempPeriodTimes = ref<PeriodTime[]>([]); // For editing time slots (unused)
-const backgroundImage = ref('');
-
-// 课表数据和颜色
-const { courses, loadCachedSchedule, listSchedules, deleteSchedule, switchSchedule, reorderSchedules } = useCourse();
 const courseColors = getShuffledColors();
 
-// 课表管理
-const scheduleList = ref<ScheduleMetadata[]>([]);
-const currentScheduleId = ref<string>();
+// 课表数据
+const { courses, loadCachedSchedule } = useCourse();
+
+// 其他状态
 const updatingScheduleId = ref<string | null>(null);
 
-// Computed: 当前激活的课表元数据
-const activeSchedule = computed(() => {
-    return scheduleList.value.find(s => s.id === currentScheduleId.value);
-});
+// 注意: activeSchedule 已从 useSchedule 导入
 
 // Computed: 当前使用的时间表
 const activeTimeTable = computed(() => {
@@ -865,10 +884,7 @@ async function handleExportSchedule(schedule: ScheduleMetadata) {
 
     if (!filePath) return;
 
-    await invoke('export_schedule', {
-      scheduleId: schedule.id,
-      filePath
-    });
+    await exportSchedule(schedule);
 
     ElMessage.success('课表导出成功');
   } catch (e) {
@@ -879,38 +895,13 @@ async function handleExportSchedule(schedule: ScheduleMetadata) {
 // 从文件导入课表
 async function handleImportScheduleFromFile() {
   try {
-    const selected = await openDialog({
-      multiple: false,
-      filters: [{
-        name: 'JSON Schedule',
-        extensions: ['json']
-      }]
-    });
-
-    if (!selected) return;
-
-    const filePath = selected as string;
-
-    await invoke('import_schedule', { filePath });
-
-    ElMessage.success('课表导入成功');
-    await loadScheduleList();
+    const scheduleId = await importScheduleFromFile();
+    if (scheduleId) {
+      ElMessage.success('课表导入成功');
+      await loadScheduleList();
+    }
   } catch (e) {
     ElMessage.error(`导入失败: ${e}`);
-  }
-}
-
-// 加载课表列表
-async function loadScheduleList() {
-  try {
-    const schedules = await listSchedules();
-    scheduleList.value = schedules;
-
-    const cfg = await invoke<AppConfig>('get_app_config');
-    currentScheduleId.value = cfg.current_schedule_id;
-
-  } catch (e) {
-    console.error('加载课表列表失败:', e);
   }
 }
 
@@ -918,7 +909,7 @@ async function loadScheduleList() {
 async function handleSwitchSchedule(scheduleId: string) {
   if (isSorting.value) return; // 排序模式下禁止切换
   try {
-    await switchSchedule(scheduleId);
+    await switchScheduleFn(scheduleId);
     await loadCachedSchedule(scheduleId);
     currentScheduleId.value = scheduleId;
     showScheduleManageDialog.value = false;
@@ -943,7 +934,7 @@ function toggleSortMode() {
 async function saveScheduleOrder() {
     try {
         const ids = scheduleList.value.map(s => s.id);
-        await reorderSchedules(ids);
+        await reorderSchedulesFn(ids);
         ElMessage.success('顺序已保存');
     } catch (e) {
         ElMessage.error(`保存顺序失败: ${e}`);
@@ -953,7 +944,7 @@ async function saveScheduleOrder() {
 // 删除课表
 async function handleDeleteSchedule(scheduleId: string) {
   try {
-    await deleteSchedule(scheduleId);
+    await deleteScheduleFn(scheduleId);
     ElMessage.success('删除成功');
     await loadScheduleList();
     // 如果删除的是当前课表,清空显示
@@ -1226,15 +1217,13 @@ function handleLogout() {
 // 保存设置
 async function saveSettings() {
   try {
-    // 更新窗口关闭行为设置
-    tempConfig.value.close_action_minimize_to_tray = closeAction.value === 'minimize';
+    // 更新提醒功能设置
+    config.value.reminder_enabled = reminderEnabled.value;
 
-    const newConfig = {
-        ...config.value,
-        ...tempConfig.value,
-    };
-    await invoke('save_app_config', { config: newConfig });
-    config.value = newConfig;
+    // 更新窗口关闭行为设置
+    config.value.close_action_minimize_to_tray = closeAction.value === 'minimize';
+
+    await invoke('save_app_config', { config: config.value });
     showSettingsDialog.value = false;
     ElMessage.success('设置保存成功');
   } catch (e) {
@@ -1242,15 +1231,31 @@ async function saveSettings() {
   }
 }
 
-// 恢复登录状态（应用启动时调用）- 不阻塞 UI
-function restoreLoginState() {
-  // 不使用 await，让它在后台异步执行
-  invoke<UserInfo>('restore_login_session')
-    .then((userInfo: UserInfo) => {
-      // 登录成功，保存到全局状态
-      globalUserInfo.value = userInfo;
-    })
-    .catch(() => {});
+// 手动检查更新
+async function handleManualCheckUpdate() {
+  const update = await checkForUpdate(true);
+  if (update) {
+    pendingUpdate.value = update;
+    showUpdateDialog.value = true;
+  } else {
+    ElMessage.info('当前已是最新版本');
+  }
+}
+
+// 跳过此版本
+async function handleSkipVersion() {
+  if (pendingUpdate.value) {
+    await skipVersion(pendingUpdate.value.version);
+  }
+  showUpdateDialog.value = false;
+}
+
+// 打开下载页面
+async function handleGoToDownload() {
+  if (pendingUpdate.value?.releaseUrl) {
+    await openUrl(pendingUpdate.value.releaseUrl);
+  }
+  showUpdateDialog.value = false;
 }
 
 // 加载配置
@@ -1266,11 +1271,16 @@ async function loadConfig() {
       show_teacher: appConfig.show_teacher ?? true,
       show_location: appConfig.show_location ?? true,
       simplified_location: appConfig.simplified_location ?? false,
+      reminder_enabled: appConfig.reminder_enabled ?? false,
+      auto_check_update: appConfig.auto_check_update ?? true,
       close_action_minimize_to_tray: appConfig.close_action_minimize_to_tray ?? true,
     };
 
     // 读取窗口关闭行为设置
     closeAction.value = config.value.close_action_minimize_to_tray === false ? 'quit' : 'minimize';
+
+    // 读取提醒功能设置
+    reminderEnabled.value = config.value.reminder_enabled ?? false;
 
     // 加载背景图
     if (config.value.background_image) {
@@ -1339,6 +1349,17 @@ onMounted(() => {
 
   // 异步初始化应用数据（不阻塞 UI）
   initializeApp();
+
+  // 自动检查更新（不阻塞 UI）
+  setTimeout(async () => {
+    if (config.value.auto_check_update) {
+      const update = await checkForUpdate(false);
+      if (update) {
+        pendingUpdate.value = update;
+        showUpdateDialog.value = true;
+      }
+    }
+  }, 2000); // 延迟2秒检查，避免阻塞启动
 });
 
 // 深色模式
@@ -1748,6 +1769,46 @@ html.dark .theme-toggle {
   color: var(--text-tertiary);
   margin-top: 8px;
   line-height: 1.6;
+}
+
+/* 更新对话框样式 */
+.update-content {
+  padding: 0 4px;
+}
+
+.version-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  color: white;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.update-content h3 {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  color: var(--text-main);
+}
+
+.release-notes {
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--surface-color-light);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.update-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .close-action-radio {

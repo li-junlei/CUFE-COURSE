@@ -117,23 +117,25 @@
       <el-button type="primary" @click="handleSave" class="modern-button primary">保存</el-button>
     </div>
 
-    <!-- Nested TimeTable Manager Dialog -->
-    <el-dialog
-        v-model="showTimeTableManager"
-        title="管理时间表"
-        width="90%"
-        align-center
-        append-to-body
-        class="custom-dialog"
-        style="max-width: 480px; height: 600px;"
-    >
-        <TimeTableManager
-            v-model="form.timeTableId"
-            @select="handleTimeTableSelect"
-            @saved="handleTimeTableSaved"
-            @deleted="handleTimeTableSaved"
-        />
-    </el-dialog>
+    <!-- Nested TimeTable Manager Dialog - 使用 Teleport 避免嵌套问题 -->
+    <Teleport to="body">
+      <el-dialog
+          v-model="showTimeTableManager"
+          title="管理时间表"
+          width="90%"
+          align-center
+          append-to-body
+          class="custom-dialog"
+          style="max-width: 480px; height: 600px;"
+      >
+          <TimeTableManager
+              v-model="form.timeTableId"
+              @select="handleTimeTableSelect"
+              @saved="handleTimeTableSaved"
+              @deleted="handleTimeTableSaved"
+          />
+      </el-dialog>
+    </Teleport>
 
   </el-dialog>
 </template>

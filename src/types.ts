@@ -116,6 +116,10 @@ export interface AppConfig {
   reminder_enabled?: boolean;
   /** 已提醒的课程记录 (防止重复提醒) key: "dayOfWeek_periods", value: timestamp */
   reminded_courses?: Record<string, number>;
+  /** 自动检查更新 */
+  auto_check_update?: boolean;
+  /** 跳过的版本号 */
+  skipped_version?: string;
   /** 关闭主界面时：true=最小化到托盘, false=直接退出 */
   close_action_minimize_to_tray?: boolean;
 }
@@ -184,5 +188,17 @@ export interface ScheduleDiff {
   modified_count: number;
   /** 未变课程数 */
   unchanged_count: number;
+}
+
+/** 软件更新信息 */
+export interface UpdateInfo {
+  /** 最新版本号 */
+  version: string;
+  /** 发布标题 */
+  title: string;
+  /** 发布说明 */
+  releaseNotes: string;
+  /** Release 页面链接 */
+  releaseUrl: string;
 }
 

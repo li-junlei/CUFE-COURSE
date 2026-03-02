@@ -32,6 +32,7 @@ config.json
 nul
 course-schedule-desktop@0.1.0
 tauri
+.vscode
 
 # AI documentation files
 CLAUDE.md

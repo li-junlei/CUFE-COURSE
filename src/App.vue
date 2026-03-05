@@ -66,9 +66,16 @@
             <span>启用上课提醒</span>
             <el-switch v-model="reminderEnabled" />
           </div>
+          <div class="setting-item" v-if="reminderEnabled">
+            <span>提醒调试日志</span>
+            <el-switch v-model="reminderDebugLogging" />
+          </div>
           <div class="setting-hint">
             情况A：无紧邻前序课程 → 课程开始前15分钟提醒<br>
             情况B：有紧邻前序课程 → 上一节课结束前3分钟提醒
+          </div>
+          <div class="setting-hint" v-if="reminderEnabled && reminderDebugLogging">
+            调试日志将输出到开发者控制台（F12）以便排查提醒触发时机
           </div>
           <!-- 开发阶段测试按钮 -->
           <div class="setting-item test-button" v-if="reminderEnabled">
@@ -639,6 +646,7 @@ import { useSchedule } from './composables/useSchedule';
 import { useConfig } from './composables/useConfig';
 import { useAuth } from './composables/useAuth';
 import { useImportExport } from './composables/useImportExport';
+import { useReminder } from './composables/useReminder';
 import { calculateDate } from './utils/date';
 import { getShuffledColors } from './utils/color';
 import PopupMenu from './components/PopupMenu.vue';
@@ -647,13 +655,14 @@ import CourseGrid from './components/CourseGrid.vue';
 import ScheduleEditDialog from './components/ScheduleEditDialog.vue';
 import ImportScheduleDialog from './components/ImportScheduleDialog.vue';
 import UserProfileDialog from './components/UserProfileDialog.vue';
-import type { AppConfig, ScheduleMetadata, UserInfo, ScheduleDiff, Course, UpdateInfo } from './types';
+import type { AppConfig, ScheduleMetadata, UserInfo, ScheduleDiff, Course, UpdateInfo, TimeTable } from './types';
 
 // 从 composables 导入状态和方法
 const { scheduleList, currentScheduleId, currentWeek, activeSchedule, loadScheduleList, deleteSchedule: deleteScheduleFn, switchSchedule: switchScheduleFn, reorderSchedules: reorderSchedulesFn } = useSchedule();
 const { config, backgroundImage, checkForUpdate, skipVersion } = useConfig();
 const { globalUserInfo: globalUserInfoRef, restoreLoginState } = useAuth();
 const { exportSchedule, importScheduleFromFile } = useImportExport();
+const { startReminderService, stopReminderService, testNotification } = useReminder();
 
 // 使用导入的全局状态
 const globalUserInfo = globalUserInfoRef;
@@ -664,6 +673,7 @@ const showWeekSelector = ref(false);
 const showImportDialog = ref(false);
 const showSettingsDialog = ref(false);
 const reminderEnabled = ref(false); // 提醒功能开关
+const reminderDebugLogging = ref(false); // 提醒调试日志开关
 const closeAction = ref<'minimize' | 'quit'>('minimize'); // 窗口关闭行为
 const showUpdateDialog = ref(false); // 更新提示对话框
 const pendingUpdate = ref<UpdateInfo | null>(null); // 待处理的更新信息
@@ -712,10 +722,18 @@ const currentSemesterWeeks = computed(() => {
 
 // Computed: 当前节次时间表
 const currentPeriodTimes = computed(() => {
-    if (activeTimeTable.value) {
-        return activeTimeTable.value.periods;
-    }
-    return config.value.period_times || [];
+  if (activeTimeTable.value) {
+    return activeTimeTable.value.periods;
+  }
+  return config.value.period_times || [];
+});
+
+const reminderTimeTables = computed<TimeTable[]>(() => {
+  if (activeTimeTable.value) return [activeTimeTable.value];
+  if (config.value.time_tables && config.value.time_tables.length > 0) {
+    return [config.value.time_tables[0]];
+  }
+  return [];
 });
 
 const weekDays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -1175,34 +1193,6 @@ async function handleImportSuccess(_scheduleId: string) {
 }
 
 // 打开个人中心
-// 测试通知功能
-async function testNotification() {
-  try {
-    // 导入通知插件（动态导入，确保插件已加载）
-    const { isPermissionGranted, requestPermission, sendNotification } = await import('@tauri-apps/plugin-notification');
-
-    // 检查并请求通知权限
-    let permissionGranted = await isPermissionGranted();
-    if (!permissionGranted) {
-      const permission = await requestPermission();
-      permissionGranted = permission === 'granted';
-    }
-
-    if (permissionGranted) {
-      // 发送测试通知
-      await sendNotification({
-        title: '上课提醒 - 测试',
-        body: '课程: 测试课程\n地点: 沙河校区主教101\n时间: 08:00 - 09:35'
-      });
-      ElMessage.success('测试通知已发送！请检查系统通知。');
-    } else {
-      ElMessage.warning('通知权限未授予，请到系统设置中开启通知权限。');
-    }
-  } catch (error) {
-    console.error('发送通知失败:', error);
-    ElMessage.error('发送通知失败: ' + (error as Error).message);
-  }
-}
 
 // 登录成功处理
 function handleLoginSuccess(userInfo: UserInfo) {
@@ -1219,6 +1209,7 @@ async function saveSettings() {
   try {
     // 更新提醒功能设置
     config.value.reminder_enabled = reminderEnabled.value;
+    config.value.reminder_debug_logging = reminderDebugLogging.value;
 
     // 更新窗口关闭行为设置
     config.value.close_action_minimize_to_tray = closeAction.value === 'minimize';
@@ -1272,6 +1263,7 @@ async function loadConfig() {
       show_location: appConfig.show_location ?? true,
       simplified_location: appConfig.simplified_location ?? false,
       reminder_enabled: appConfig.reminder_enabled ?? false,
+      reminder_debug_logging: appConfig.reminder_debug_logging ?? false,
       auto_check_update: appConfig.auto_check_update ?? true,
       close_action_minimize_to_tray: appConfig.close_action_minimize_to_tray ?? true,
     };
@@ -1281,6 +1273,7 @@ async function loadConfig() {
 
     // 读取提醒功能设置
     reminderEnabled.value = config.value.reminder_enabled ?? false;
+    reminderDebugLogging.value = config.value.reminder_debug_logging ?? false;
 
     // 加载背景图
     if (config.value.background_image) {
@@ -1361,6 +1354,41 @@ onMounted(() => {
     }
   }, 2000); // 延迟2秒检查，避免阻塞启动
 });
+
+watch(
+  [reminderEnabled, reminderDebugLogging, courses, reminderTimeTables, currentWeek],
+  () => {
+    const canRun =
+      reminderEnabled.value &&
+      courses.value.length > 0 &&
+      reminderTimeTables.value.length > 0;
+
+    if (!canRun) {
+      stopReminderService();
+      return;
+    }
+
+    if (!config.value.reminded_courses) {
+      config.value.reminded_courses = {};
+    }
+
+    stopReminderService();
+    startReminderService(
+      courses.value,
+      reminderTimeTables.value,
+      currentWeek.value,
+      (key: string) => {
+        if (!config.value.reminded_courses) {
+          config.value.reminded_courses = {};
+        }
+        config.value.reminded_courses[key] = Date.now();
+      },
+      config.value.reminded_courses,
+      reminderDebugLogging.value
+    );
+  },
+  { immediate: true, deep: true }
+);
 
 // 深色模式
 const isDark = ref(false);

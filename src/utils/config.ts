@@ -22,6 +22,7 @@ export function getDefaultConfig(): AppConfig {
     edu_system_url: undefined,
     close_action_minimize_to_tray: true,
     reminder_enabled: false,
+    reminder_debug_logging: false,
     time_tables: undefined,
   };
 }

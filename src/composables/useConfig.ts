@@ -101,7 +101,7 @@ export async function updateCardOpacity(opacity: number): Promise<void> {
 }
 
 /** 当前应用版本号 */
-const CURRENT_VERSION = '2.5.0';
+const CURRENT_VERSION = '2.6.0';
 
 /**
  * 检查更新

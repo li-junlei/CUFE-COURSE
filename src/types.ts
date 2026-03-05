@@ -114,6 +114,8 @@ export interface AppConfig {
   simplified_location?: boolean;
   /** 启用上课提醒 */
   reminder_enabled?: boolean;
+  /** 启用提醒调试日志 */
+  reminder_debug_logging?: boolean;
   /** 已提醒的课程记录 (防止重复提醒) key: "dayOfWeek_periods", value: timestamp */
   reminded_courses?: Record<string, number>;
   /** 自动检查更新 */

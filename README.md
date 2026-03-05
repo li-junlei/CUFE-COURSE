@@ -3,9 +3,13 @@
 中央财经大学（CUFE）课程表桌面应用，基于 Tauri 2 + Vue 3 + TypeScript。
 
 ## 项目状态
-- 当前版本：`2.5.0`
+- 当前版本：`2.6.0`
 - 代码仓库：<https://github.com/li-junlei/CUFE-COURSE>
 - Release 下载：<https://github.com/li-junlei/CUFE-COURSE/releases>
+
+## 2.6.0 更新
+- 修复上课提醒定时触发路径，避免仅“测试通知”可用的问题。
+- 新增“提醒调试日志开关”，可在设置中开启并通过控制台观察提醒判定日志。
 
 ## 主要功能
 - 教务系统登录与会话恢复

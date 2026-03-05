@@ -78,10 +78,21 @@ export function useReminder() {
     courses: Course[],
     timeTables: TimeTable[],
     currentWeek: number,
-    _remindedCourses: Record<string, number> = {}
+    _remindedCourses: Record<string, number> = {},
+    onReminded?: (_key: string) => void,
+    debugLogging: boolean = false
   ): Promise<void> {
+    if (!timeTables.length || !timeTables[0]?.periods?.length) return;
+
     const now = new Date();
     const currentTime = now.getHours() * 60 + now.getMinutes();
+    if (debugLogging) {
+      console.log('[提醒调试] 检查触发窗口:', {
+        currentWeek,
+        currentTime,
+        courseCount: courses.length
+      });
+    }
 
     // 获取今天的课程
     const todayCourses = getTodayCourses(courses, currentWeek);
@@ -115,7 +126,14 @@ export function useReminder() {
         if (!hasPrevious) {
           // 情况A：无紧邻前序课程
           console.log('[提醒服务] 发送情况A提醒:', course.name);
-          await sendCourseNotification(course, periodTime);
+          const sent = await sendCourseNotification(course, periodTime);
+          if (sent) {
+            _remindedCourses[key] = now.getTime();
+            onReminded?.(key);
+            if (debugLogging) {
+              console.log('[提醒调试] 情况A已触发:', { key, course: course.name });
+            }
+          }
         }
       }
     }
@@ -148,7 +166,14 @@ export function useReminder() {
       // 检查是否在提醒时间窗口内
       if (Math.abs(currentTime - reminderMinutes) <= 1) {
         console.log('[提醒服务] 发送情况B提醒:', course.name);
-        await sendCourseNotification(course, periodTime);
+        const sent = await sendCourseNotification(course, periodTime);
+        if (sent) {
+          _remindedCourses[key] = now.getTime();
+          onReminded?.(key);
+          if (debugLogging) {
+            console.log('[提醒调试] 情况B已触发:', { key, course: course.name });
+          }
+        }
       }
     }
   }
@@ -158,18 +183,20 @@ export function useReminder() {
     courses: Course[],
     timeTables: TimeTable[],
     currentWeek: number,
-    _onReminded?: (_key: string) => void
+    _onReminded?: (_key: string) => void,
+    remindedCourses: Record<string, number> = {},
+    debugLogging: boolean = false
   ): void {
     if (isRunning.value) {
       return;
     }
 
     // 立即执行一次检查
-    checkAndNotify(courses, timeTables, currentWeek);
+    void checkAndNotify(courses, timeTables, currentWeek, remindedCourses, _onReminded, debugLogging);
 
     // 设置定时器，每30秒检查一次
     reminderTimer.value = window.setInterval(() => {
-      checkAndNotify(courses, timeTables, currentWeek);
+      void checkAndNotify(courses, timeTables, currentWeek, remindedCourses, _onReminded, debugLogging);
     }, 30000);
 
     isRunning.value = true;

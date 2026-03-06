@@ -1,6 +1,6 @@
 [package]
 name = "cufe-course"
-version = "2.6.0"
+version = "2.6.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -44,4 +44,3 @@ windows = { version = "0.58", features = [
     "Win32_Security_Cryptography",
     "Win32_Foundation",
 ] }
-

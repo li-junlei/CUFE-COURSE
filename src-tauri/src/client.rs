@@ -124,6 +124,15 @@ impl EduSystemClient {
         since_the_epoch.as_millis()
     }
 
+    /// 登录页当前仍走 HTTPS，但登录后的业务接口实际跑在 HTTP。
+    fn api_base_url(&self) -> String {
+        if self.base_url.starts_with("https://") {
+            format!("http://{}", &self.base_url["https://".len()..])
+        } else {
+            self.base_url.clone()
+        }
+    }
+
     /// 执行登录
     /// 参考 C:\project\new-school-sdk\test_cufe.py 的实现
     /// 使用 plaintext 登录 bypass (mmsfjm: '0')
@@ -231,7 +240,7 @@ impl EduSystemClient {
         let username = self.username.as_ref()
             .ok_or("获取课表需要学号信息，请重新登录".to_string())?;
 
-        let url = format!("{}/kbcx/xskbcx_cxXsKb.html", self.base_url);
+        let url = format!("{}/kbcx/xskbcx_cxXsKb.html", self.api_base_url());
 
         // 构造请求参数，参考 SDK schedules.py
         // xqm: 学期码 (3: 第一学期, 12: 第二学期, 16: 第三学期) - 根据 SDK 的 TERM 字典推断
@@ -288,7 +297,7 @@ impl EduSystemClient {
     /// 获取用户个人信息 (CUFE)
     /// 参考 SDK user_info.py 的实现
     pub async fn get_user_info(&self) -> Result<crate::models::UserInfo, String> {
-        let url = format!("{}/xsxxxggl/xsgrxxwh_cxXsgrxx.html", self.base_url);
+        let url = format!("{}/xsxxxggl/xsgrxxwh_cxXsgrxx.html", self.api_base_url());
 
         let params = [
             ("gnmkdm", "N100801"),
@@ -374,7 +383,7 @@ impl EduSystemClient {
         use base64::{Engine as _, engine::general_purpose};
 
         // CUFE 照片 API URL
-        let url = format!("{}/xtgl/photo_cxXszp4.html?xh_id={}&zplx=rxhzp", self.base_url, student_number);
+        let url = format!("{}/xtgl/photo_cxXszp4.html?xh_id={}&zplx=rxhzp", self.api_base_url(), student_number);
 
 
         // reqwest 的 cookie_store 会自动携带之前登录时保存的 cookies
@@ -434,7 +443,7 @@ impl EduSystemClient {
             return Err("获取考试需要学号信息，请重新登录".to_string());
         }
 
-        let url = format!("{}/kwgl/kscx_cxXsksxxIndex.html", self.base_url);
+        let url = format!("{}/kwgl/kscx_cxXsksxxIndex.html", self.api_base_url());
 
         // 学期码映射 (参考课表查询的映射规则)
         let term_code = match term {
